@@ -17,6 +17,29 @@
   }
 }
 
+.headerActions {
+  display: flex;
+  gap: 8px;
+}
+
+.iconBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  transition: color 0.15s, border-color 0.15s;
+
+  &:hover {
+    color: var(--color-text);
+    border-color: var(--color-border-focus);
+  }
+}
+
 .createBtn {
   display: inline-flex;
   align-items: center;
@@ -47,6 +70,31 @@
 
   p {
     font-size: 16px;
+  }
+}
+
+.startActions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.importBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: none;
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+
+  &:hover {
+    background: rgba(37, 99, 235, 0.06);
   }
 }
 
@@ -116,5 +164,143 @@
   &:hover {
     color: var(--color-danger);
     background: rgba(220, 38, 38, 0.08);
+  }
+}
+
+// -- Query result sections --
+
+.querySections {
+  margin-bottom: 32px;
+}
+
+.querySection {
+  margin-bottom: 24px;
+}
+
+.querySectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+
+  h2 {
+    font-size: 15px;
+    font-weight: 600;
+  }
+}
+
+.refreshBtn {
+  display: flex;
+  align-items: center;
+  padding: 4px;
+  background: none;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  transition: color 0.15s;
+
+  &:hover {
+    color: var(--color-primary);
+  }
+}
+
+.queryLoading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 0;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.queryError {
+  font-size: 13px;
+  color: var(--color-danger);
+  padding: 8px 0;
+}
+
+.queryEmpty {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  padding: 8px 0;
+}
+
+.wiGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.wiCard {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 14px;
+  cursor: pointer;
+  transition: box-shadow 0.15s, border-color 0.15s;
+
+  &:hover {
+    box-shadow: var(--shadow);
+    border-color: var(--color-border-focus);
+  }
+}
+
+.wiCardHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  color: var(--color-text-secondary);
+}
+
+.wiType {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.wiId {
+  font-size: 11px;
+  margin-left: auto;
+}
+
+.wiTitle {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  margin-bottom: 8px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.wiMeta {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+
+.wiState {
+  font-weight: 500;
+}
+
+.docsSection {
+  h2 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 12px;
   }
 }

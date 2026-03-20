@@ -74,6 +74,8 @@ export interface TestDocument {
   header: HeaderData
   notes: string
   matrixSections: MatrixSection[]
+  adoFields?: Record<string, unknown>
+  adoWorkItemId?: number
 }
 
 export function createDefaultHeader(template: TemplateConfig = DEFAULT_TEMPLATE): HeaderData {

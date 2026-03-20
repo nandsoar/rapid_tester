@@ -9,6 +9,8 @@ import NotesControl from "./NotesControl"
 import MatrixControl from "./MatrixControl"
 import ScenarioControl from "./ScenarioControl"
 import MarkdownPreview from "./MarkdownPreview"
+import WorkItemPanel from "./WorkItemDrawer"
+import DiscussionPanel from "./DiscussionPanel"
 import { generateMarkdown } from "../markdown"
 import styles from "./Editor.module.scss"
 
@@ -17,6 +19,8 @@ export default function Editor() {
   const navigate = useNavigate()
   const [doc, setDoc] = useState<TestDocument | null>(null)
   const [showPreview, setShowPreview] = useState(false)
+
+  const hasWorkItem = !!(doc?.adoFields)
 
   useEffect(() => {
     if (!id) return
@@ -80,7 +84,7 @@ export default function Editor() {
   if (!doc) return null
 
   return (
-    <div className={styles.root}>
+    <div className={hasWorkItem ? styles.rootWide : styles.root}>
       <header className={styles.toolbar}>
         <button className={styles.backBtn} onClick={() => navigate("/")}>
           <ArrowLeft size={18} />
@@ -109,60 +113,79 @@ export default function Editor() {
         </div>
       </header>
 
-      {showPreview ? (
-        <MarkdownPreview markdown={generateMarkdown(doc)} />
-      ) : (
-        <div className={styles.controls}>
-          <HeaderControl
-            data={doc.header}
-            onChange={(header: HeaderData) => persist({ ...doc, header })}
-          />
+      <div className={styles.body}>
+        {hasWorkItem && doc.adoWorkItemId && (
+          <aside className={styles.sidebarLeft}>
+            <DiscussionPanel workItemId={doc.adoWorkItemId} />
+          </aside>
+        )}
 
-          <NotesControl
-            value={doc.notes}
-            onChange={(notes: string) => persist({ ...doc, notes })}
-          />
-
-          {doc.matrixSections.map((section, idx) => (
-            <div key={section.id} className={styles.matrixGroup}>
-              <MatrixControl
-                index={idx}
-                section={section}
-                onChange={(updated: MatrixSection) => updateMatrixSection(section.id, updated)}
-                onDelete={() => deleteMatrixSection(section.id)}
+        <main className={styles.center}>
+          {showPreview ? (
+            <MarkdownPreview markdown={generateMarkdown(doc)} />
+          ) : (
+            <div className={styles.controls}>
+              <HeaderControl
+                data={doc.header}
+                onChange={(header: HeaderData) => persist({ ...doc, header })}
               />
 
-              {section.scenarios.map(scenario => (
-                <ScenarioControl
-                  key={scenario.id}
-                  scenario={scenario}
-                  onChange={(updated: ScenarioData) =>
-                    updateMatrixSection(section.id, {
-                      ...section,
-                      scenarios: section.scenarios.map(s =>
-                        s.id === updated.id ? updated : s
-                      ),
-                    })
-                  }
-                  onDelete={() =>
-                    updateMatrixSection(section.id, {
-                      ...section,
-                      scenarios: section.scenarios.filter(
-                        s => s.id !== scenario.id
-                      ),
-                    })
-                  }
-                />
-              ))}
-            </div>
-          ))}
+              <NotesControl
+                value={doc.notes}
+                onChange={(notes: string) => persist({ ...doc, notes })}
+              />
 
-          <button className={styles.addSection} onClick={addMatrixSection}>
-            <Plus size={18} />
-            Add Matrix Section
-          </button>
-        </div>
-      )}
+              {doc.matrixSections.map((section, idx) => (
+                <div key={section.id} className={styles.matrixGroup}>
+                  <MatrixControl
+                    index={idx}
+                    section={section}
+                    onChange={(updated: MatrixSection) => updateMatrixSection(section.id, updated)}
+                    onDelete={() => deleteMatrixSection(section.id)}
+                  />
+
+                  {section.scenarios.map(scenario => (
+                    <ScenarioControl
+                      key={scenario.id}
+                      scenario={scenario}
+                      onChange={(updated: ScenarioData) =>
+                        updateMatrixSection(section.id, {
+                          ...section,
+                          scenarios: section.scenarios.map(s =>
+                            s.id === updated.id ? updated : s
+                          ),
+                        })
+                      }
+                      onDelete={() =>
+                        updateMatrixSection(section.id, {
+                          ...section,
+                          scenarios: section.scenarios.filter(
+                            s => s.id !== scenario.id
+                          ),
+                        })
+                      }
+                    />
+                  ))}
+                </div>
+              ))}
+
+              <button className={styles.addSection} onClick={addMatrixSection}>
+                <Plus size={18} />
+                Add Matrix Section
+              </button>
+            </div>
+          )}
+        </main>
+
+        {hasWorkItem && (
+          <aside className={styles.sidebarRight}>
+            <WorkItemPanel
+              fields={doc.adoFields!}
+              workItemId={doc.adoWorkItemId}
+            />
+          </aside>
+        )}
+      </div>
     </div>
   )
 }
