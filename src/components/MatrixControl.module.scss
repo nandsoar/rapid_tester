@@ -1,0 +1,208 @@
+.root {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  color: var(--color-text-secondary);
+}
+
+.sectionTitle {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--color-text);
+}
+
+.deleteBtn {
+  display: flex;
+  align-items: center;
+  padding: 6px;
+  background: none;
+  border: none;
+  border-radius: var(--radius);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--color-danger);
+    background: rgba(220, 38, 38, 0.08);
+  }
+}
+
+.parameters {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.paramRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.paramName {
+  width: 160px;
+  flex-shrink: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 13px;
+  outline: none;
+
+  &:focus {
+    border-color: var(--color-primary);
+  }
+}
+
+.valuesList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+  align-items: center;
+}
+
+.valueChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+
+  input {
+    padding: 6px 8px;
+    border: none;
+    outline: none;
+    font-size: 13px;
+    width: 100px;
+    background: none;
+  }
+
+  button {
+    display: flex;
+    align-items: center;
+    padding: 4px;
+    background: none;
+    border: none;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+
+    &:hover {
+      color: var(--color-danger);
+    }
+  }
+}
+
+.addValue {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+}
+
+.deleteParam {
+  display: flex;
+  align-items: center;
+  padding: 6px;
+  background: none;
+  border: none;
+  border-radius: var(--radius);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  margin-top: 2px;
+
+  &:hover {
+    color: var(--color-danger);
+  }
+}
+
+.addParam {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+}
+
+.pickerArea {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.pickerToggle {
+  padding: 6px 14px;
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+
+  &:hover {
+    background: rgba(37, 99, 235, 0.06);
+  }
+}
+
+.combos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.comboChip {
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+
+  &:hover:not(:disabled) {
+    border-color: var(--color-primary);
+    background: rgba(37, 99, 235, 0.06);
+  }
+
+  &.added {
+    background: rgba(37, 99, 235, 0.08);
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+    cursor: default;
+  }
+}
