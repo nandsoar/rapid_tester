@@ -52,9 +52,247 @@ export interface AdoWorkItemSummary {
 /** Field mapping: ADO field path → header field key */
 export const DEFAULT_FIELD_MAPPING: Record<string, string> = {
   "System.Title": "_documentName",
-  "System.AssignedTo": "testEngineer",
   "System.State": "_state",
   "Microsoft.VSTS.Build.FoundIn": "buildVersion",
+  "Custom.TestedBy": "testEngineer",
+}
+
+/**
+ * Upload a binary attachment to ADO. Returns the attachment URL.
+ * The file data should be a base64 data URL (data:image/png;base64,...).
+ */
+export async function uploadAttachment(
+  fileName: string,
+  dataUrl: string,
+): Promise<string> {
+  const settings = loadAdoSettings()
+  if (!settings.orgUrl || !settings.pat) {
+    throw new Error("ADO settings not configured.")
+  }
+
+  // Convert data URL to binary
+  const base64 = dataUrl.split(",")[1]
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+
+  const encodedName = encodeURIComponent(fileName)
+  const url = `${settings.orgUrl}/_apis/wit/attachments?fileName=${encodedName}&api-version=7.1`
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Basic ${btoa(`:${settings.pat}`)}`,
+      "Content-Type": "application/octet-stream",
+    },
+    body: bytes,
+  })
+
+  if (!res.ok) {
+    throw new Error(`Upload failed: ${res.status} ${res.statusText}`)
+  }
+
+  const json = await res.json()
+  return json.url as string
+}
+
+/**
+ * Discover the field reference name for a given display name on a work item.
+ */
+async function resolveFieldName(
+  workItemId: number,
+  displayName: string,
+): Promise<string | null> {
+  const settings = loadAdoSettings()
+  const orgUrl = settings.orgUrl.replace(/\/+$/, "")
+
+  // Fetch work item to get its type
+  const wiUrl = `${orgUrl}/_apis/wit/workitems/${workItemId}?fields=System.WorkItemType,System.TeamProject&api-version=7.1`
+  const wiRes = await fetch(wiUrl, { headers: adoHeaders(settings.pat) })
+  if (!wiRes.ok) return null
+  const wiJson = await wiRes.json()
+  const wiType = wiJson.fields["System.WorkItemType"] as string
+  const project = wiJson.fields["System.TeamProject"] as string
+
+  // Fetch field definitions for this work item type
+  const encType = encodeURIComponent(wiType)
+  const encProj = encodeURIComponent(project)
+  const fieldsUrl = `${orgUrl}/${encProj}/_apis/wit/workitemtypes/${encType}/fields?api-version=7.1`
+  const fieldsRes = await fetch(fieldsUrl, { headers: adoHeaders(settings.pat) })
+  if (!fieldsRes.ok) return null
+  const fieldsJson = await fieldsRes.json()
+
+  const target = displayName.toLowerCase()
+  for (const field of fieldsJson.value ?? []) {
+    if ((field.name as string)?.toLowerCase() === target) {
+      return field.referenceName as string
+    }
+  }
+  return null
+}
+
+/** Represents a parsed test iteration from the Test Cases field */
+export interface TestIteration {
+  number: number
+  timestamp: string
+  content: string
+}
+
+/** Parse iteration blocks from the Test Cases HTML field.
+ *  Uses <div data-rt-iteration="N" data-rt-ts="..."> markers
+ *  because ADO strips HTML comments from rich-text fields.
+ *
+ *  Strategy: find all opening markers, then slice the HTML between them
+ *  to capture content regardless of nested divs. */
+export function parseIterations(html: string): { iterations: TestIteration[]; raw: string } {
+  const iterations: TestIteration[] = []
+
+  // Find all opening markers — handle both quoted and unquoted attribute values
+  // ADO may normalize data-rt-iteration="1" to data-rt-iteration=1
+  const markerRegex = /<div[^>]*data-rt-iteration=["']?(\d+)["']?[^>]*data-rt-ts=["']?([^"'>]+)["']?[^>]*>/gi
+  const markers: { number: number; timestamp: string; startAfter: number; fullMatchEnd: number }[] = []
+  let m
+  while ((m = markerRegex.exec(html)) !== null) {
+    markers.push({
+      number: parseInt(m[1], 10),
+      timestamp: m[2],
+      startAfter: m.index + m[0].length,
+      fullMatchEnd: m.index,
+    })
+  }
+
+  // Extract content between consecutive markers (or to end of string)
+  for (let i = 0; i < markers.length; i++) {
+    const start = markers[i].startAfter
+    const end = i + 1 < markers.length ? markers[i + 1].fullMatchEnd : html.length
+    let content = html.slice(start, end).trim()
+    // Strip the trailing </div> that closes this marker's wrapper
+    content = content.replace(/<\/div>\s*$/, "").trim()
+    iterations.push({
+      number: markers[i].number,
+      timestamp: markers[i].timestamp,
+      content,
+    })
+  }
+
+  return { iterations, raw: html }
+}
+
+/** Build the full field value with iterations */
+function buildFieldValue(iterations: TestIteration[]): string {
+  return iterations
+    .map(it => {
+      const header = `<h2>Iteration ${it.number} — ${it.timestamp}</h2>`
+      return `<div data-rt-iteration="${it.number}" data-rt-ts="${it.timestamp}">\n${header}\n${it.content}\n</div>`
+    })
+    .join("\n\n")
+}
+
+/**
+ * Fetch the current Test Cases field content and parsed iterations.
+ */
+export async function fetchTestCasesField(
+  workItemId: number,
+): Promise<{ fieldRef: string; raw: string; iterations: TestIteration[] }> {
+  const settings = loadAdoSettings()
+  if (!settings.orgUrl || !settings.pat) {
+    throw new Error("ADO settings not configured.")
+  }
+
+  const orgUrl = settings.orgUrl.replace(/\/+$/, "")
+
+  const fieldRef = await resolveFieldName(workItemId, "Test Cases")
+  if (!fieldRef) {
+    throw new Error("Could not find a \"Test Cases\" field on this work item type.")
+  }
+
+  const getUrl = `${orgUrl}/_apis/wit/workitems/${workItemId}?fields=${encodeURIComponent(fieldRef)}&api-version=7.1`
+  const getRes = await fetch(getUrl, {
+    headers: adoHeaders(settings.pat),
+  })
+  if (!getRes.ok) {
+    throw new Error(`Failed to fetch work item: ${getRes.status} ${getRes.statusText}`)
+  }
+  const getJson = await getRes.json()
+  const raw = (getJson.fields?.[fieldRef] as string) ?? ""
+  const { iterations } = parseIterations(raw)
+
+  return { fieldRef, raw, iterations }
+}
+
+/**
+ * Push content to the Test Cases field as a new or replacement iteration.
+ * @param targetIteration - null for new iteration, or the iteration number to replace
+ */
+export async function pushTestCases(
+  workItemId: number,
+  newContent: string,
+  targetIteration: number | null,
+): Promise<void> {
+  const settings = loadAdoSettings()
+  if (!settings.orgUrl || !settings.pat) {
+    throw new Error("ADO settings not configured.")
+  }
+
+  const orgUrl = settings.orgUrl.replace(/\/+$/, "")
+  const { fieldRef, raw, iterations } = await fetchTestCasesField(workItemId)
+
+  const timestamp = new Date().toLocaleString()
+
+  let updatedIterations: TestIteration[]
+
+  if (targetIteration === null) {
+    // New iteration — prepend at top
+    const nextNum = iterations.length > 0
+      ? Math.max(...iterations.map(i => i.number)) + 1
+      : 1
+    const newIter: TestIteration = {
+      number: nextNum,
+      timestamp,
+      content: newContent,
+    }
+    updatedIterations = [newIter, ...iterations]
+  } else {
+    // Replace existing iteration
+    updatedIterations = iterations.map(it =>
+      it.number === targetIteration
+        ? { ...it, timestamp, content: newContent }
+        : it
+    )
+  }
+
+  // If there were no iterations previously and there's legacy content, preserve it
+  let combined: string
+  if (iterations.length === 0 && raw.trim()) {
+    // Legacy content exists — put new iteration on top, legacy below a separator
+    const newBlock = buildFieldValue(updatedIterations)
+    combined = `${newBlock}\n\n<hr/><p style="color:#888;font-size:12px;">— Legacy content —</p><hr/>\n\n${raw}`
+  } else {
+    combined = buildFieldValue(updatedIterations)
+  }
+
+  // PATCH the work item
+  const patchUrl = `${orgUrl}/_apis/wit/workitems/${workItemId}?api-version=7.1`
+  const patchRes = await fetch(patchUrl, {
+    method: "PATCH",
+    headers: {
+      "Authorization": `Basic ${btoa(`:${settings.pat}`)}`,
+      "Content-Type": "application/json-patch+json",
+    },
+    body: JSON.stringify([
+      {
+        op: "replace",
+        path: `/fields/${fieldRef}`,
+        value: combined,
+      },
+    ]),
+  })
+
+  if (!patchRes.ok) {
+    const body = await patchRes.text()
+    throw new Error(`Push failed: ${patchRes.status} ${patchRes.statusText}\n${body}`)
+  }
 }
 
 export async function fetchWorkItem(id: number): Promise<AdoWorkItem> {

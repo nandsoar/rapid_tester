@@ -83,6 +83,35 @@
     border-color: var(--color-border-focus);
     background: var(--color-bg);
   }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+}
+
+.pushBtn {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+
+  &:hover:not(:disabled) {
+    background: rgba(37, 99, 235, 0.06);
+  }
+}
+
+.pushOk {
+  font-size: 12px;
+  color: var(--color-success);
+  white-space: nowrap;
+}
+
+.pushErr {
+  font-size: 12px;
+  color: var(--color-danger);
+  max-width: 300px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .body {

@@ -1,5 +1,6 @@
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { ChevronDown, ChevronUp } from "lucide-react"
+import { marked } from "marked"
 import clsx from "clsx"
 import styles from "./WorkItemDrawer.module.scss"
 
@@ -146,7 +147,7 @@ export default function WorkItemPanel({ fields, workItemId }: Props) {
                 dangerouslySetInnerHTML={{ __html: sanitizeHtml(activeValue) }}
               />
             ) : activeValue ? (
-              <pre className={styles.richContentPre}>{activeValue}</pre>
+              <RenderedMarkdown text={activeValue} />
             ) : null}
           </div>
         </>
@@ -156,6 +157,20 @@ export default function WorkItemPanel({ fields, workItemId }: Props) {
         <p className={styles.empty}>No work item details available.</p>
       )}
     </div>
+  )
+}
+
+function RenderedMarkdown({ text }: { text: string }) {
+  const html = useMemo(() => {
+    marked.setOptions({ breaks: true, gfm: true })
+    return marked.parse(text) as string
+  }, [text])
+
+  return (
+    <div
+      className={styles.richContent}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   )
 }
 

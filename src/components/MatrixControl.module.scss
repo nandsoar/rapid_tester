@@ -163,6 +163,12 @@
   border-top: 1px solid var(--color-border);
 }
 
+.pickerActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .pickerToggle {
   padding: 6px 14px;
   border: 1px solid var(--color-primary);
@@ -178,29 +184,101 @@
   }
 }
 
-.combos {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 12px;
-}
-
-.comboChip {
-  padding: 6px 12px;
+.addAllBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  background: var(--color-bg);
+  background: none;
+  color: var(--color-text-secondary);
   font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+
+  &:hover {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+    background: rgba(37, 99, 235, 0.06);
+  }
+}
+
+.comboTable {
+  margin-top: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  thead th {
+    padding: 8px 12px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--color-text-secondary);
+    background: var(--color-bg);
+    border-bottom: 1px solid var(--color-border);
+
+    &:last-child {
+      width: 40px;
+    }
+  }
+
+  tbody tr {
+    border-bottom: 1px solid var(--color-border);
+    transition: background 0.12s;
+
+    &:last-child {
+      border-bottom: none;
+    }
+
+    &:hover:not(.addedRow) {
+      background: rgba(37, 99, 235, 0.03);
+    }
+  }
+
+  td {
+    padding: 6px 12px;
+    color: var(--color-text);
+  }
+}
+
+.addedRow {
+  background: rgba(37, 99, 235, 0.04);
+
+  td {
+    color: var(--color-primary);
+    opacity: 0.7;
+  }
+}
+
+.rowAddBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
 
   &:hover:not(:disabled) {
     border-color: var(--color-primary);
+    color: var(--color-primary);
     background: rgba(37, 99, 235, 0.06);
   }
 
   &.added {
-    background: rgba(37, 99, 235, 0.08);
     border-color: var(--color-primary);
     color: var(--color-primary);
     cursor: default;

@@ -2,6 +2,8 @@
 - [x] basic markdown generation 
 - [x] matrix generation
 - [ ] field auto completion given database
+- [ ] image optimizations and previews
+- [ ] test sessions iterations
 
 ---
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import { nanoid } from "nanoid"
-import { ArrowLeft, Download, Plus, Eye, Pencil } from "lucide-react"
+import { ArrowLeft, Download, Plus, Eye, Pencil, Upload } from "lucide-react"
 import { loadDocument, saveDocument } from "../storage"
 import type { TestDocument, HeaderData, MatrixSection, ScenarioData } from "../types"
 import HeaderControl from "./HeaderControl"
@@ -12,6 +12,9 @@ import MarkdownPreview from "./MarkdownPreview"
 import WorkItemPanel from "./WorkItemDrawer"
 import DiscussionPanel from "./DiscussionPanel"
 import { generateMarkdown } from "../markdown"
+import { marked } from "marked"
+import { uploadAttachment, pushTestCases } from "../ado"
+import PushDialog from "./PushDialog"
 import styles from "./Editor.module.scss"
 
 export default function Editor() {
@@ -19,6 +22,9 @@ export default function Editor() {
   const navigate = useNavigate()
   const [doc, setDoc] = useState<TestDocument | null>(null)
   const [showPreview, setShowPreview] = useState(false)
+  const [pushing, setPushing] = useState(false)
+  const [pushMsg, setPushMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null)
+  const [showPushDialog, setShowPushDialog] = useState(false)
 
   const hasWorkItem = !!(doc?.adoFields)
 
@@ -81,6 +87,38 @@ export default function Editor() {
     URL.revokeObjectURL(url)
   }
 
+  async function handlePushToAdo(targetIteration: number | null) {
+    if (!doc || !doc.adoWorkItemId) return
+    setShowPushDialog(false)
+    setPushing(true)
+    setPushMsg(null)
+    try {
+      // Upload any images that don't have an ADO URL yet
+      let updated = doc
+      for (const section of updated.matrixSections) {
+        for (const scenario of section.scenarios) {
+          for (const img of scenario.images ?? []) {
+            if (!img.adoUrl && img.data) {
+              const adoUrl = await uploadAttachment(img.name, img.data)
+              img.adoUrl = adoUrl
+            }
+          }
+        }
+      }
+      persist(updated)
+
+      const md = generateMarkdown(updated, undefined, "ado")
+      const html = await marked(md, { gfm: true, breaks: true })
+      await pushTestCases(doc.adoWorkItemId, html, targetIteration)
+      setPushMsg({ type: "ok", text: "Pushed to ADO successfully" })
+      setTimeout(() => setPushMsg(null), 4000)
+    } catch (err) {
+      setPushMsg({ type: "err", text: (err as Error).message })
+    } finally {
+      setPushing(false)
+    }
+  }
+
   if (!doc) return null
 
   return (
@@ -110,8 +148,31 @@ export default function Editor() {
             <Download size={16} />
             Download .md
           </button>
+          {hasWorkItem && doc.adoWorkItemId && (
+            <button
+              className={`${styles.toolbarBtn} ${styles.pushBtn}`}
+              onClick={() => setShowPushDialog(true)}
+              disabled={pushing}
+            >
+              <Upload size={16} />
+              {pushing ? "Pushing..." : "Push to ADO"}
+            </button>
+          )}
+          {pushMsg && (
+            <span className={pushMsg.type === "ok" ? styles.pushOk : styles.pushErr}>
+              {pushMsg.text}
+            </span>
+          )}
         </div>
       </header>
+
+      {showPushDialog && doc.adoWorkItemId && (
+        <PushDialog
+          workItemId={doc.adoWorkItemId}
+          onPush={handlePushToAdo}
+          onClose={() => setShowPushDialog(false)}
+        />
+      )}
 
       <div className={styles.body}>
         {hasWorkItem && doc.adoWorkItemId && (
@@ -144,9 +205,10 @@ export default function Editor() {
                     onDelete={() => deleteMatrixSection(section.id)}
                   />
 
-                  {section.scenarios.map(scenario => (
+                  {section.scenarios.map((scenario, si) => (
                     <ScenarioControl
                       key={scenario.id}
+                      index={si}
                       scenario={scenario}
                       onChange={(updated: ScenarioData) =>
                         updateMatrixSection(section.id, {

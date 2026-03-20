@@ -48,6 +48,13 @@ export interface MatrixParameter {
   values: string[]
 }
 
+export interface ScenarioImage {
+  id: string
+  data: string // base64 data URL for local/offline preview
+  name: string
+  adoUrl?: string // real ADO attachment URL, populated after upload
+}
+
 export interface ScenarioData {
   id: string
   matrixCombo: Record<string, string> // paramName -> selectedValue
@@ -57,6 +64,7 @@ export interface ScenarioData {
   expected: string
   setup: string
   steps: string
+  images?: ScenarioImage[]
 }
 
 export interface MatrixSection {

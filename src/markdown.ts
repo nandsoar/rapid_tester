@@ -31,12 +31,12 @@ function statusLabel(status: string): string {
   }
 }
 
-export function generateMarkdown(doc: TestDocument, template: TemplateConfig = DEFAULT_TEMPLATE): string {
+export type ImageResolveMode = "local" | "ado"
+
+export function generateMarkdown(doc: TestDocument, template: TemplateConfig = DEFAULT_TEMPLATE, imageMode: ImageResolveMode = "local"): string {
   const lines: string[] = []
 
-  // Title
-  lines.push(`# ${doc.name || "Test Document"}`)
-  lines.push("")
+  // No title — the work item title is used in ADO
 
   // Header — blockquote style
   const h = doc.header
@@ -67,12 +67,13 @@ export function generateMarkdown(doc: TestDocument, template: TemplateConfig = D
     )
     if (validParams.length > 0 && section.scenarios.length > 0) {
       const paramNames = validParams.map(p => p.name)
-      lines.push(`| ${paramNames.join(" | ")} | Result |`)
-      lines.push(`| ${paramNames.map(() => "---").join(" | ")} | --- |`)
+      lines.push(`| ${paramNames.join(" | ")} | Expected | Result |`)
+      lines.push(`| ${paramNames.map(() => "---").join(" | ")} | --- | --- |`)
 
       for (const s of section.scenarios) {
         const vals = paramNames.map(name => s.matrixCombo[name] || "—")
-        lines.push(`| ${vals.join(" | ")} | ${statusEmoji(s.status)} ${statusLabel(s.status)} |`)
+        const expected = s.expected.trim() || "—"
+        lines.push(`| ${vals.join(" | ")} | ${expected} | ${statusEmoji(s.status)} ${statusLabel(s.status)} |`)
       }
       lines.push("")
     }
@@ -87,22 +88,38 @@ export function generateMarkdown(doc: TestDocument, template: TemplateConfig = D
         if (s.status === "n-a") continue // skip N/A scenarios in detail
 
         lines.push(
-          `#### ${statusEmoji(s.status)} Scenario ${i + 1}: ${s.title || "Untitled"}`
+          `#### ${statusEmoji(s.status)} Scenario ${i + 1}${s.title ? `: ${s.title}` : ""}`
         )
         lines.push("")
+
+        // Combo inputs
+        if (Object.keys(s.matrixCombo).length > 0) {
+          const comboParts = Object.entries(s.matrixCombo)
+            .map(([k, v]) => `\`${k}: ${v}\``)
+            .join("  ")
+          lines.push(comboParts)
+          lines.push("")
+        }
+
         lines.push(`**Status:** ${statusLabel(s.status)}`)
         lines.push("")
 
         if (s.description.trim()) {
-          lines.push(`**Description:** ${s.description}`)
+          lines.push("**Description:**")
+          lines.push("")
+          lines.push(s.description)
           lines.push("")
         }
         if (s.expected.trim()) {
-          lines.push(`**Expected Result:** ${s.expected}`)
+          lines.push("**Expected Result:**")
+          lines.push("")
+          lines.push(s.expected)
           lines.push("")
         }
         if (s.setup.trim()) {
-          lines.push(`**Setup / Preconditions:** ${s.setup}`)
+          lines.push("**Setup / Preconditions:**")
+          lines.push("")
+          lines.push(s.setup)
           lines.push("")
         }
         if (s.steps.trim()) {
@@ -118,5 +135,24 @@ export function generateMarkdown(doc: TestDocument, template: TemplateConfig = D
     }
   }
 
-  return lines.join("\n")
+  let md = lines.join("\n")
+
+  // Resolve img: references
+  const imageMap = new Map<string, { data: string; name: string; adoUrl?: string }>()
+  for (const section of doc.matrixSections) {
+    for (const s of section.scenarios) {
+      for (const img of s.images ?? []) {
+        imageMap.set(img.id, { data: img.data, name: img.name, adoUrl: img.adoUrl })
+      }
+    }
+  }
+  md = md.replace(/!\[([^\]]*)\]\(img:([a-zA-Z0-9_-]+)\)/g, (_match, alt, id) => {
+    const img = imageMap.get(id)
+    if (!img) return _match
+    const label = alt || img.name
+    const url = imageMode === "ado" && img.adoUrl ? img.adoUrl : img.data
+    return `![${label}](${url})`
+  })
+
+  return md
 }

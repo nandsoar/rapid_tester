@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { nanoid } from "nanoid"
-import { Plus, Trash2, X, Grid3X3 } from "lucide-react"
+import { Plus, Trash2, X, Grid3X3, Check } from "lucide-react"
 import type { MatrixSection, MatrixParameter, ScenarioData } from "../types"
 import styles from "./MatrixControl.module.scss"
 
@@ -86,7 +86,30 @@ export default function MatrixControl({
   }
 
   function comboToTitle(combo: Record<string, string>): string {
-    return Object.values(combo).join(", ")
+    return Object.entries(combo)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(", ")
+  }
+
+  function addAllCombos() {
+    const newScenarios = combos
+      .filter(c => !isComboAlreadyAdded(c))
+      .map((combo, i) => {
+        const num = section.scenarios.length + i + 1
+        return {
+          id: nanoid(),
+          matrixCombo: combo,
+          status: "not-run" as const,
+          title: "",
+          description: "",
+          expected: "",
+          setup: "",
+          steps: "",
+        }
+      })
+    if (newScenarios.length > 0) {
+      onChange({ ...section, scenarios: [...section.scenarios, ...newScenarios] })
+    }
   }
 
   function isComboAlreadyAdded(combo: Record<string, string>): boolean {
@@ -101,7 +124,7 @@ export default function MatrixControl({
       id: nanoid(),
       matrixCombo: combo,
       status: "not-run",
-      title: `Scenario ${scenarioNum}`,
+      title: "",
       description: "",
       expected: "",
       setup: "",
@@ -177,29 +200,54 @@ export default function MatrixControl({
 
       {combos.length > 0 && (
         <div className={styles.pickerArea}>
-          <button
-            className={styles.pickerToggle}
-            onClick={() => setShowPicker(p => !p)}
-          >
-            {showPicker ? "Hide" : "Pick"} Scenarios ({combos.length} combos)
-          </button>
+          <div className={styles.pickerActions}>
+            <button
+              className={styles.pickerToggle}
+              onClick={() => setShowPicker(p => !p)}
+            >
+              {showPicker ? "Hide" : "Pick"} Scenarios ({combos.length} combos)
+            </button>
+            {showPicker && combos.some(c => !isComboAlreadyAdded(c)) && (
+              <button className={styles.addAllBtn} onClick={addAllCombos}>
+                <Plus size={14} />
+                Add All
+              </button>
+            )}
+          </div>
 
           {showPicker && (
-            <div className={styles.combos}>
-              {combos.map((combo, ci) => {
-                const added = isComboAlreadyAdded(combo)
-                return (
-                  <button
-                    key={ci}
-                    className={`${styles.comboChip} ${added ? styles.added : ""}`}
-                    onClick={() => !added && addScenarioFromCombo(combo)}
-                    disabled={added}
-                  >
-                    {comboToTitle(combo)}
-                    {added ? " ✓" : ""}
-                  </button>
-                )
-              })}
+            <div className={styles.comboTable}>
+              <table>
+                <thead>
+                  <tr>
+                    {Object.keys(combos[0]).map(key => (
+                      <th key={key}>{key}</th>
+                    ))}
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {combos.map((combo, ci) => {
+                    const added = isComboAlreadyAdded(combo)
+                    return (
+                      <tr key={ci} className={added ? styles.addedRow : ""}>
+                        {Object.values(combo).map((val, vi) => (
+                          <td key={vi}>{val}</td>
+                        ))}
+                        <td>
+                          <button
+                            className={`${styles.rowAddBtn} ${added ? styles.added : ""}`}
+                            onClick={() => !added && addScenarioFromCombo(combo)}
+                            disabled={added}
+                          >
+                            {added ? <Check size={14} /> : <Plus size={14} />}
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </div>

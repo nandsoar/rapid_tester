@@ -6,66 +6,48 @@ import { loadDocuments, saveDocument, deleteDocument } from "../storage"
 import { createDefaultDocument } from "../types"
 import type { TestDocument } from "../types"
 import { loadAdoSettings, runSavedQuery, fetchWorkItemsBatch, fetchWorkItem, mapWorkItemToHeader, isAdoConfigured } from "../ado"
-import type { MappedWorkItem, AdoWorkItemSummary } from "../ado"
+import type { MappedWorkItem, AdoWorkItemSummary, SavedQuery } from "../ado"
 import ImportWorkItem from "./ImportWorkItem"
 import styles from "./Dashboard.module.scss"
-
-interface QueryResult {
-  queryId: string
-  queryName: string
-  items: AdoWorkItemSummary[]
-  loading: boolean
-  error: string
-}
 
 export default function Dashboard() {
   const [docs, setDocs] = useState<TestDocument[]>([])
   const [showImport, setShowImport] = useState(false)
-  const [queryResults, setQueryResults] = useState<QueryResult[]>([])
+  const [savedQueries, setSavedQueries] = useState<SavedQuery[]>([])
+  const [activeQueryId, setActiveQueryId] = useState("")
+  const [queryItems, setQueryItems] = useState<AdoWorkItemSummary[]>([])
+  const [queryLoading, setQueryLoading] = useState(false)
+  const [queryError, setQueryError] = useState("")
   const navigate = useNavigate()
 
   useEffect(() => {
     setDocs(loadDocuments())
-  }, [])
-
-  const loadQueries = useCallback(async () => {
     const settings = loadAdoSettings()
-    if (!settings.savedQueries.length || !isAdoConfigured()) return
-
-    const initial: QueryResult[] = settings.savedQueries.map(q => ({
-      queryId: q.id,
-      queryName: q.name,
-      items: [],
-      loading: true,
-      error: "",
-    }))
-    setQueryResults(initial)
-
-    for (let i = 0; i < settings.savedQueries.length; i++) {
-      const q = settings.savedQueries[i]
-      try {
-        const ids = await runSavedQuery(q.id)
-        const items = await fetchWorkItemsBatch(ids.slice(0, 50)) // limit to 50
-        setQueryResults(prev =>
-          prev.map(r =>
-            r.queryId === q.id ? { ...r, items, loading: false } : r
-          )
-        )
-      } catch (err) {
-        setQueryResults(prev =>
-          prev.map(r =>
-            r.queryId === q.id
-              ? { ...r, loading: false, error: err instanceof Error ? err.message : "Failed" }
-              : r
-          )
-        )
-      }
+    if (settings.savedQueries.length && isAdoConfigured()) {
+      setSavedQueries(settings.savedQueries)
     }
   }, [])
 
-  useEffect(() => {
-    loadQueries()
-  }, [loadQueries])
+  const loadQuery = useCallback(async (queryId: string) => {
+    if (!queryId) {
+      setQueryItems([])
+      return
+    }
+    setActiveQueryId(queryId)
+    setQueryLoading(true)
+    setQueryError("")
+    setQueryItems([])
+
+    try {
+      const ids = await runSavedQuery(queryId)
+      const items = await fetchWorkItemsBatch(ids.slice(0, 50))
+      setQueryItems(items)
+    } catch (err) {
+      setQueryError(err instanceof Error ? err.message : "Failed to load query")
+    } finally {
+      setQueryLoading(false)
+    }
+  }, [])
 
   function handleCreate() {
     const doc = createDefaultDocument(nanoid(), "Untitled Test Document")
@@ -139,57 +121,67 @@ export default function Dashboard() {
         </button>
       </div>
 
-      {queryResults.length > 0 && (
-        <div className={styles.querySections}>
-          {queryResults.map(qr => (
-            <section key={qr.queryId} className={styles.querySection}>
-              <div className={styles.querySectionHeader}>
-                <h2>{qr.queryName}</h2>
-                <button
-                  className={styles.refreshBtn}
-                  onClick={loadQueries}
-                  title="Refresh"
+      {savedQueries.length > 0 && (
+        <section className={styles.querySection}>
+          <div className={styles.querySectionHeader}>
+            <select
+              className={styles.queryPicker}
+              value={activeQueryId}
+              onChange={e => loadQuery(e.target.value)}
+            >
+              <option value="">Select a query...</option>
+              {savedQueries.map(q => (
+                <option key={q.id} value={q.id}>{q.name}</option>
+              ))}
+            </select>
+            {activeQueryId && (
+              <button
+                className={styles.refreshBtn}
+                onClick={() => loadQuery(activeQueryId)}
+                title="Refresh"
+                disabled={queryLoading}
+              >
+                <RefreshCw size={14} className={queryLoading ? styles.spin : undefined} />
+              </button>
+            )}
+          </div>
+
+          {queryLoading && (
+            <div className={styles.queryLoading}>
+              <Loader2 size={18} className={styles.spin} />
+              <span>Loading...</span>
+            </div>
+          )}
+          {queryError && <p className={styles.queryError}>{queryError}</p>}
+          {!queryLoading && !queryError && activeQueryId && queryItems.length === 0 && (
+            <p className={styles.queryEmpty}>No items found.</p>
+          )}
+          {queryItems.length > 0 && (
+            <div className={styles.wiGrid}>
+              {queryItems.map(wi => (
+                <div
+                  key={wi.id}
+                  className={styles.wiCard}
+                  onClick={() => handleOpenWorkItem(wi.id)}
                 >
-                  <RefreshCw size={14} />
-                </button>
-              </div>
-              {qr.loading ? (
-                <div className={styles.queryLoading}>
-                  <Loader2 size={18} className={styles.spin} />
-                  <span>Loading...</span>
+                  <div className={styles.wiCardHeader}>
+                    {typeIcon(wi.type)}
+                    <span className={styles.wiType}>{wi.type}</span>
+                    <span className={styles.wiId}>#{wi.id}</span>
+                  </div>
+                  <h3 className={styles.wiTitle}>{wi.title}</h3>
+                  <div className={styles.wiMeta}>
+                    <span className={styles.wiState}>{wi.state}</span>
+                    {wi.assignedTo && <span>{wi.assignedTo}</span>}
+                  </div>
                 </div>
-              ) : qr.error ? (
-                <p className={styles.queryError}>{qr.error}</p>
-              ) : qr.items.length === 0 ? (
-                <p className={styles.queryEmpty}>No items found.</p>
-              ) : (
-                <div className={styles.wiGrid}>
-                  {qr.items.map(wi => (
-                    <div
-                      key={wi.id}
-                      className={styles.wiCard}
-                      onClick={() => handleOpenWorkItem(wi.id)}
-                    >
-                      <div className={styles.wiCardHeader}>
-                        {typeIcon(wi.type)}
-                        <span className={styles.wiType}>{wi.type}</span>
-                        <span className={styles.wiId}>#{wi.id}</span>
-                      </div>
-                      <h3 className={styles.wiTitle}>{wi.title}</h3>
-                      <div className={styles.wiMeta}>
-                        <span className={styles.wiState}>{wi.state}</span>
-                        {wi.assignedTo && <span>{wi.assignedTo}</span>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-          ))}
-        </div>
+              ))}
+            </div>
+          )}
+        </section>
       )}
 
-      {docs.length === 0 && queryResults.length === 0 && (
+      {docs.length === 0 && savedQueries.length === 0 && (
         <div className={styles.empty}>
           <FileText size={48} strokeWidth={1} />
           <p>No test documents yet</p>
