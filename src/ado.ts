@@ -11,13 +11,14 @@ export interface AdoSettings {
   project: string  // e.g. "NEXiA Fulfillment" — needed for queries
   pat: string
   savedQueries: SavedQuery[]
+  useMarkdown: boolean
 }
 
 export function loadAdoSettings(): AdoSettings {
   const raw = localStorage.getItem(SETTINGS_KEY)
-  if (!raw) return { orgUrl: "", project: "", pat: "", savedQueries: [] }
+  if (!raw) return { orgUrl: "", project: "", pat: "", savedQueries: [], useMarkdown: false }
   const parsed = JSON.parse(raw) as AdoSettings
-  return { savedQueries: [], ...parsed }
+  return { savedQueries: [], useMarkdown: false, ...parsed }
 }
 
 export function saveAdoSettings(settings: AdoSettings): void {
@@ -98,6 +99,28 @@ export async function uploadAttachment(
 }
 
 /**
+ * Download an ADO attachment URL and return it as a base64 data URL.
+ * ADO attachment URLs require authentication, so we fetch with the PAT.
+ */
+export async function downloadAttachment(url: string): Promise<string> {
+  const settings = loadAdoSettings()
+  if (!settings.pat) throw new Error("PAT not configured")
+
+  const res = await fetch(url, {
+    headers: { "Authorization": `Basic ${btoa(`:${settings.pat}`)}` },
+  })
+  if (!res.ok) throw new Error(`Download failed: ${res.status}`)
+
+  const blob = await res.blob()
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onloadend = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(blob)
+  })
+}
+
+/**
  * Discover the field reference name for a given display name on a work item.
  */
 async function resolveFieldName(
@@ -145,42 +168,106 @@ export interface TestIteration {
  *
  *  Strategy: find all opening markers, then slice the HTML between them
  *  to capture content regardless of nested divs. */
-export function parseIterations(html: string): { iterations: TestIteration[]; raw: string } {
+export function parseIterations(raw: string): { iterations: TestIteration[]; raw: string } {
   const iterations: TestIteration[] = []
 
-  // Find all opening markers — handle both quoted and unquoted attribute values
-  // ADO may normalize data-rt-iteration="1" to data-rt-iteration=1
-  const markerRegex = /<div[^>]*data-rt-iteration=["']?(\d+)["']?[^>]*data-rt-ts=["']?([^"'>]+)["']?[^>]*>/gi
-  const markers: { number: number; timestamp: string; startAfter: number; fullMatchEnd: number }[] = []
-  let m
-  while ((m = markerRegex.exec(html)) !== null) {
-    markers.push({
-      number: parseInt(m[1], 10),
-      timestamp: m[2],
-      startAfter: m.index + m[0].length,
-      fullMatchEnd: m.index,
+  // Try Markdown markers first: <!-- rt-iteration N | timestamp -->
+  const mdMarkerRegex = /<!-- rt-iteration (\d+) \| (.+?) -->/g
+  const mdMarkers: { number: number; timestamp: string; startAfter: number; fullMatchStart: number }[] = []
+  let mm
+  while ((mm = mdMarkerRegex.exec(raw)) !== null) {
+    mdMarkers.push({
+      number: parseInt(mm[1], 10),
+      timestamp: mm[2],
+      startAfter: mm.index + mm[0].length,
+      fullMatchStart: mm.index,
     })
   }
 
-  // Extract content between consecutive markers (or to end of string)
-  for (let i = 0; i < markers.length; i++) {
-    const start = markers[i].startAfter
-    const end = i + 1 < markers.length ? markers[i + 1].fullMatchEnd : html.length
-    let content = html.slice(start, end).trim()
-    // Strip the trailing </div> that closes this marker's wrapper
+  if (mdMarkers.length > 0) {
+    for (let i = 0; i < mdMarkers.length; i++) {
+      const start = mdMarkers[i].startAfter
+      const end = i + 1 < mdMarkers.length ? mdMarkers[i + 1].fullMatchStart : raw.length
+      let content = raw.slice(start, end).trim()
+      // Strip the Markdown iteration header so buildFieldValue doesn't duplicate it
+      content = content.replace(/^##\s*Iteration\s+\d+\s*—\s*.+$/m, "").trim()
+      iterations.push({
+        number: mdMarkers[i].number,
+        timestamp: mdMarkers[i].timestamp,
+        content,
+      })
+    }
+    return { iterations, raw }
+  }
+
+  // Fall back to HTML markers: <div data-rt-iteration="N" data-rt-ts="...">
+  const htmlMarkerRegex = /<div[^>]*data-rt-iteration=["']?(\d+)["']?[^>]*data-rt-ts=["']?([^"'>]+)["']?[^>]*>/gi
+  const htmlMarkers: { number: number; timestamp: string; startAfter: number; fullMatchStart: number }[] = []
+  let m
+  while ((m = htmlMarkerRegex.exec(raw)) !== null) {
+    htmlMarkers.push({
+      number: parseInt(m[1], 10),
+      timestamp: m[2],
+      startAfter: m.index + m[0].length,
+      fullMatchStart: m.index,
+    })
+  }
+
+  for (let i = 0; i < htmlMarkers.length; i++) {
+    const start = htmlMarkers[i].startAfter
+    const end = i + 1 < htmlMarkers.length ? htmlMarkers[i + 1].fullMatchStart : raw.length
+    let content = raw.slice(start, end).trim()
     content = content.replace(/<\/div>\s*$/, "").trim()
+    content = content.replace(/^<h2>Iteration\s+\d+\s*—\s*[^<]*<\/h2>\s*/i, "").trim()
     iterations.push({
-      number: markers[i].number,
-      timestamp: markers[i].timestamp,
+      number: htmlMarkers[i].number,
+      timestamp: htmlMarkers[i].timestamp,
       content,
     })
   }
 
-  return { iterations, raw: html }
+  if (iterations.length > 0) {
+    return { iterations, raw }
+  }
+
+  // Last resort: detect <h2>Iteration N — timestamp</h2> headers without markers
+  const h2Regex = /<h2>\s*Iteration\s+(\d+)\s*—\s*(.+?)\s*<\/h2>/gi
+  const h2Markers: { number: number; timestamp: string; startAfter: number; fullMatchStart: number }[] = []
+  let h2m
+  while ((h2m = h2Regex.exec(raw)) !== null) {
+    h2Markers.push({
+      number: parseInt(h2m[1], 10),
+      timestamp: h2m[2].trim(),
+      startAfter: h2m.index + h2m[0].length,
+      fullMatchStart: h2m.index,
+    })
+  }
+
+  for (let i = 0; i < h2Markers.length; i++) {
+    const start = h2Markers[i].startAfter
+    const end = i + 1 < h2Markers.length ? h2Markers[i + 1].fullMatchStart : raw.length
+    const content = raw.slice(start, end).trim()
+    iterations.push({
+      number: h2Markers[i].number,
+      timestamp: h2Markers[i].timestamp,
+      content,
+    })
+  }
+
+  return { iterations, raw }
 }
 
 /** Build the full field value with iterations */
-function buildFieldValue(iterations: TestIteration[]): string {
+function buildFieldValue(iterations: TestIteration[], markdown: boolean): string {
+  if (markdown) {
+    return iterations
+      .map(it => {
+        const marker = `<!-- rt-iteration ${it.number} | ${it.timestamp} -->`
+        const header = `## Iteration ${it.number} — ${it.timestamp}`
+        return `${marker}\n${header}\n\n${it.content}`
+      })
+      .join("\n\n---\n\n")
+  }
   return iterations
     .map(it => {
       const header = `<h2>Iteration ${it.number} — ${it.timestamp}</h2>`
@@ -238,7 +325,10 @@ export async function pushTestCases(
   const orgUrl = settings.orgUrl.replace(/\/+$/, "")
   const { fieldRef, raw, iterations } = await fetchTestCasesField(workItemId)
 
-  const timestamp = new Date().toLocaleString()
+  const timestamp = new Date().toLocaleString(undefined, {
+    year: "numeric", month: "numeric", day: "numeric",
+    hour: "numeric", minute: "2-digit",
+  })
 
   let updatedIterations: TestIteration[]
 
@@ -254,22 +344,26 @@ export async function pushTestCases(
     }
     updatedIterations = [newIter, ...iterations]
   } else {
-    // Replace existing iteration
+    // Replace existing iteration — keep original timestamp
     updatedIterations = iterations.map(it =>
       it.number === targetIteration
-        ? { ...it, timestamp, content: newContent }
+        ? { ...it, content: newContent }
         : it
     )
   }
 
+  const useMarkdown = settings.useMarkdown
+
   // If there were no iterations previously and there's legacy content, preserve it
   let combined: string
   if (iterations.length === 0 && raw.trim()) {
-    // Legacy content exists — put new iteration on top, legacy below a separator
-    const newBlock = buildFieldValue(updatedIterations)
-    combined = `${newBlock}\n\n<hr/><p style="color:#888;font-size:12px;">— Legacy content —</p><hr/>\n\n${raw}`
+    const newBlock = buildFieldValue(updatedIterations, useMarkdown)
+    const separator = useMarkdown
+      ? "\n\n---\n\n*— Legacy content —*\n\n---\n\n"
+      : '\n\n<hr/><p style="color:#888;font-size:12px;">— Legacy content —</p><hr/>\n\n'
+    combined = `${newBlock}${separator}${raw}`
   } else {
-    combined = buildFieldValue(updatedIterations)
+    combined = buildFieldValue(updatedIterations, useMarkdown)
   }
 
   // PATCH the work item

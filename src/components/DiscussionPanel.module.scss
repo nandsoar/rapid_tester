@@ -129,9 +129,11 @@
   border-radius: var(--radius);
   background: var(--color-bg);
   color: var(--color-text);
-  resize: vertical;
+  resize: none;
+  overflow-y: auto;
   font-family: inherit;
   min-height: 60px;
+  max-height: 200px;
 
   &:focus {
     outline: none;

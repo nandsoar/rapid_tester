@@ -16,10 +16,27 @@ export function loadDocument(id: string): TestDocument | undefined {
   return loadDocuments().find(d => d.id === id)
 }
 
+/** Strip base64 image data before persisting to localStorage to avoid quota limits. */
+function stripImageData(doc: TestDocument): TestDocument {
+  return {
+    ...doc,
+    matrixSections: doc.matrixSections.map(s => ({
+      ...s,
+      scenarios: s.scenarios.map(sc => ({
+        ...sc,
+        images: (sc.images ?? []).map(img => ({
+          ...img,
+          data: "", // data lives in IndexedDB
+        })),
+      })),
+    })),
+  }
+}
+
 export function saveDocument(doc: TestDocument): void {
   const docs = loadDocuments()
   const idx = docs.findIndex(d => d.id === doc.id)
-  const updated = { ...doc, updatedAt: new Date().toISOString() }
+  const updated = { ...stripImageData(doc), updatedAt: new Date().toISOString() }
   if (idx >= 0) {
     docs[idx] = updated
   } else {

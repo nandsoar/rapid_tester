@@ -21,10 +21,12 @@
   border-radius: var(--radius);
   font-size: 14px;
   font-family: var(--font-sans);
-  resize: vertical;
+  resize: none;
+  overflow-y: auto;
   outline: none;
   transition: border-color 0.15s;
   min-height: 80px;
+  max-height: 400px;
 
   &:focus {
     border-color: var(--color-primary);

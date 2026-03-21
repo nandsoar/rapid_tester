@@ -85,17 +85,10 @@ export default function MatrixControl({
     return combos
   }
 
-  function comboToTitle(combo: Record<string, string>): string {
-    return Object.entries(combo)
-      .map(([k, v]) => `${k}: ${v}`)
-      .join(", ")
-  }
-
   function addAllCombos() {
     const newScenarios = combos
       .filter(c => !isComboAlreadyAdded(c))
-      .map((combo, i) => {
-        const num = section.scenarios.length + i + 1
+      .map((combo) => {
         return {
           id: nanoid(),
           matrixCombo: combo,
@@ -119,7 +112,6 @@ export default function MatrixControl({
   }
 
   function addScenarioFromCombo(combo: Record<string, string>) {
-    const scenarioNum = section.scenarios.length + 1
     const scenario: ScenarioData = {
       id: nanoid(),
       matrixCombo: combo,

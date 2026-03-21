@@ -1,8 +1,11 @@
-import { useRef, useState } from "react"
+import { useRef, useState, useEffect } from "react"
 import { nanoid } from "nanoid"
 import { ChevronDown, Trash2, ImagePlus, X, Image, Loader2 } from "lucide-react"
+import type { EditorView } from "@codemirror/view"
 import type { ScenarioData, ScenarioImage, ScenarioStatus } from "../types"
 import { uploadAttachment, isAdoConfigured } from "../ado"
+import { compressImage, saveImageData, loadImageDataBatch, deleteImageData } from "../imageStore"
+import MarkdownInput from "./MarkdownInput"
 import styles from "./ScenarioControl.module.scss"
 
 interface Props {
@@ -27,9 +30,27 @@ export default function ScenarioControl({
   onDelete,
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const textareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({})
+  const editorViews = useRef<Record<string, EditorView | null>>({})
   const [pickerField, setPickerField] = useState<string | null>(null)
   const [uploading, setUploading] = useState<Set<string>>(new Set())
+  const [imgDataCache, setImgDataCache] = useState<Map<string, string>>(new Map())
+
+  // Load image data from IndexedDB for thumbnails
+  useEffect(() => {
+    const ids = (scenario.images ?? [])
+      .filter(img => !img.data && !imgDataCache.has(img.id))
+      .map(img => img.id)
+    if (ids.length === 0) return
+    loadImageDataBatch(ids).then(loaded => {
+      if (loaded.size > 0) {
+        setImgDataCache(prev => {
+          const next = new Map(prev)
+          loaded.forEach((v, k) => next.set(k, v))
+          return next
+        })
+      }
+    })
+  }, [scenario.images])
 
   // Keep a ref to latest scenario/onChange so async callbacks don't use stale closures
   const scenarioRef = useRef(scenario)
@@ -37,10 +58,10 @@ export default function ScenarioControl({
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
 
-  function tryUploadToAdo(img: ScenarioImage) {
+  function tryUploadToAdo(img: ScenarioImage, data: string) {
     if (!isAdoConfigured()) return
     setUploading(prev => new Set(prev).add(img.id))
-    uploadAttachment(img.name, img.data)
+    uploadAttachment(img.name, data)
       .then(adoUrl => {
         const latest = scenarioRef.current
         onChangeRef.current({
@@ -61,21 +82,17 @@ export default function ScenarioControl({
   }
 
   function insertImageRef(fieldKey: string, img: ScenarioImage) {
-    const ta = textareaRefs.current[fieldKey]
+    const view = editorViews.current[fieldKey]
     const ref = `![${img.name}](img:${img.id})`
-    if (ta) {
-      const start = ta.selectionStart
-      const end = ta.selectionEnd
-      const val = ta.value
-      const newVal = val.slice(0, start) + ref + val.slice(end)
-      update(fieldKey as keyof ScenarioData, newVal)
-      // Restore cursor after the inserted ref
-      requestAnimationFrame(() => {
-        ta.selectionStart = ta.selectionEnd = start + ref.length
-        ta.focus()
+    if (view) {
+      const pos = view.state.selection.main.head
+      view.dispatch({
+        changes: { from: pos, insert: ref },
+        selection: { anchor: pos + ref.length },
       })
+      view.focus()
     } else {
-      const current = (scenario as Record<string, unknown>)[fieldKey] as string ?? ""
+      const current = (scenario as unknown as Record<string, unknown>)[fieldKey] as string ?? ""
       update(fieldKey as keyof ScenarioData, current + (current ? "\n" : "") + ref)
     }
     setPickerField(null)
@@ -90,14 +107,19 @@ export default function ScenarioControl({
     Array.from(files).forEach(file => {
       if (!file.type.startsWith("image/")) return
       const reader = new FileReader()
-      reader.onload = () => {
+      reader.onload = async () => {
+        const raw = reader.result as string
+        const compressed = await compressImage(raw)
+        const imgId = nanoid()
+        await saveImageData(imgId, compressed)
+        setImgDataCache(prev => new Map(prev).set(imgId, compressed))
         const img: ScenarioImage = {
-          id: nanoid(),
-          data: reader.result as string,
+          id: imgId,
+          data: "", // data lives in IndexedDB
           name: file.name || `screenshot-${Date.now()}.png`,
         }
         onChange({ ...scenario, images: [...(scenario.images ?? []), img] })
-        tryUploadToAdo(img)
+        tryUploadToAdo(img, compressed)
       }
       reader.readAsDataURL(file)
     })
@@ -107,37 +129,40 @@ export default function ScenarioControl({
   function addImageAndInsert(file: File, fieldKey: string) {
     if (!file.type.startsWith("image/")) return
     const reader = new FileReader()
-    reader.onload = () => {
+    reader.onload = async () => {
+      const raw = reader.result as string
+      const compressed = await compressImage(raw)
+      const imgId = nanoid()
       const imgName = file.name || `screenshot-${Date.now()}.png`
+      await saveImageData(imgId, compressed)
+      setImgDataCache(prev => new Map(prev).set(imgId, compressed))
       const img: ScenarioImage = {
-        id: nanoid(),
-        data: reader.result as string,
+        id: imgId,
+        data: "", // data lives in IndexedDB
         name: imgName,
       }
       const ref = `![${imgName}](img:${img.id})`
-      const ta = textareaRefs.current[fieldKey]
-      const current = (scenario as Record<string, unknown>)[fieldKey] as string ?? ""
+      const view = editorViews.current[fieldKey]
+      const current = (scenario as unknown as Record<string, unknown>)[fieldKey] as string ?? ""
       let newVal: string
-      let cursorPos: number
-      if (ta) {
-        const start = ta.selectionStart
-        const end = ta.selectionEnd
-        newVal = current.slice(0, start) + ref + current.slice(end)
-        cursorPos = start + ref.length
+      if (view) {
+        const pos = view.state.selection.main.head
+        const docText = view.state.doc.toString()
+        newVal = docText.slice(0, pos) + ref + docText.slice(pos)
       } else {
         newVal = current + (current ? "\n" : "") + ref
-        cursorPos = newVal.length
       }
       onChange({
         ...scenario,
         [fieldKey]: newVal,
         images: [...(scenario.images ?? []), img],
       })
-      tryUploadToAdo(img)
-      if (ta) {
+      tryUploadToAdo(img, compressed)
+      if (view) {
         requestAnimationFrame(() => {
-          ta.selectionStart = ta.selectionEnd = cursorPos
-          ta.focus()
+          const pos = view.state.selection.main.head + ref.length
+          view.dispatch({ selection: { anchor: pos } })
+          view.focus()
         })
       }
     }
@@ -145,34 +170,41 @@ export default function ScenarioControl({
   }
 
   function removeImage(imgId: string) {
+    deleteImageData(imgId)
     onChange({
       ...scenario,
       images: (scenario.images ?? []).filter(i => i.id !== imgId),
     })
   }
 
-  function handleFieldPaste(e: React.ClipboardEvent, fieldKey: string) {
-    const items = e.clipboardData.items
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i]
-      if (item.type.startsWith("image/")) {
-        const file = item.getAsFile()
-        if (file) {
-          e.preventDefault()
-          addImageAndInsert(file, fieldKey)
-          return
+  function handleFieldPaste(fieldKey: string) {
+    return (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items
+      if (!items) return
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile()
+          if (file) {
+            e.preventDefault()
+            addImageAndInsert(file, fieldKey)
+            return
+          }
         }
       }
     }
   }
 
-  function handleFieldDrop(e: React.DragEvent, fieldKey: string) {
-    const files = e.dataTransfer.files
-    for (const file of files) {
-      if (file.type.startsWith("image/")) {
-        e.preventDefault()
-        addImageAndInsert(file, fieldKey)
-        return
+  function handleFieldDrop(fieldKey: string) {
+    return (e: DragEvent) => {
+      const files = e.dataTransfer?.files
+      if (!files) return
+      for (const file of files) {
+        if (file.type.startsWith("image/")) {
+          e.preventDefault()
+          addImageAndInsert(file, fieldKey)
+          return
+        }
       }
     }
   }
@@ -279,7 +311,7 @@ export default function ScenarioControl({
                             onClick={() => insertImageRef(f.key, img)}
                             title={img.name}
                           >
-                            <img src={img.data} alt={img.name} />
+                            <img src={img.data || imgDataCache.get(img.id) || img.adoUrl} alt={img.name} />
                             <span>{img.name}</span>
                           </button>
                         ))}
@@ -288,14 +320,13 @@ export default function ScenarioControl({
                   </div>
                 )}
               </div>
-              <textarea
-                ref={el => { textareaRefs.current[f.key] = el }}
-                value={(scenario as Record<string, unknown>)[f.key] as string ?? ""}
-                onChange={e => update(f.key as keyof ScenarioData, e.target.value)}
-                onPaste={e => handleFieldPaste(e, f.key)}
-                onDrop={e => handleFieldDrop(e, f.key)}
+              <MarkdownInput
+                value={(scenario as unknown as Record<string, unknown>)[f.key] as string ?? ""}
+                onChange={val => update(f.key as keyof ScenarioData, val)}
+                onPaste={handleFieldPaste(f.key)}
+                onDrop={handleFieldDrop(f.key)}
+                editorViewRef={view => { editorViews.current[f.key] = view }}
                 placeholder={f.placeholder}
-                rows={f.rows}
               />
             </div>
           ))}
@@ -333,7 +364,7 @@ export default function ScenarioControl({
           <div className={styles.imageGrid}>
             {(scenario.images ?? []).map(img => (
               <div key={img.id} className={styles.imageThumb}>
-                <img src={img.data} alt={img.name} />
+                <img src={img.data || imgDataCache.get(img.id) || img.adoUrl} alt={img.name} />
                 <button
                   className={styles.imageRemove}
                   onClick={() => removeImage(img.id)}

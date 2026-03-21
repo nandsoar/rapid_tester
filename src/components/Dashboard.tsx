@@ -5,9 +5,10 @@ import { Plus, FileText, Trash2, Download, Settings, RefreshCw, Loader2, Bug, Bo
 import { loadDocuments, saveDocument, deleteDocument } from "../storage"
 import { createDefaultDocument } from "../types"
 import type { TestDocument } from "../types"
-import { loadAdoSettings, runSavedQuery, fetchWorkItemsBatch, fetchWorkItem, mapWorkItemToHeader, isAdoConfigured } from "../ado"
+import { loadAdoSettings, runSavedQuery, fetchWorkItemsBatch, fetchWorkItem, mapWorkItemToHeader, isAdoConfigured, fetchTestCasesField } from "../ado"
 import type { MappedWorkItem, AdoWorkItemSummary, SavedQuery } from "../ado"
 import ImportWorkItem from "./ImportWorkItem"
+import { parseIterationHtml } from "../parseIteration"
 import styles from "./Dashboard.module.scss"
 
 export default function Dashboard() {
@@ -56,16 +57,27 @@ export default function Dashboard() {
   }
 
   function handleImport(mapped: MappedWorkItem) {
+    setShowImport(false)
+    // Reuse existing document for this work item if one exists
+    const existing = docs.find(d => d.adoWorkItemId === mapped.workItemId)
+    if (existing) {
+      navigate(`/edit/${existing.id}`)
+      return
+    }
     const doc = createDefaultDocument(nanoid(), mapped.documentName)
     doc.header = { ...doc.header, ...mapped.header }
     doc.adoFields = mapped.rawFields
     doc.adoWorkItemId = mapped.workItemId
-    saveDocument(doc)
-    setShowImport(false)
-    navigate(`/edit/${doc.id}`)
+    autoLoadLatest(doc)
   }
 
   async function handleOpenWorkItem(wiId: number) {
+    // Reuse existing document for this work item if one exists
+    const existing = docs.find(d => d.adoWorkItemId === wiId)
+    if (existing) {
+      navigate(`/edit/${existing.id}`)
+      return
+    }
     try {
       const wi = await fetchWorkItem(wiId)
       const mapped = mapWorkItemToHeader(wi)
@@ -73,14 +85,30 @@ export default function Dashboard() {
       doc.header = { ...doc.header, ...mapped.header }
       doc.adoFields = mapped.rawFields
       doc.adoWorkItemId = mapped.workItemId
-      saveDocument(doc)
-      navigate(`/edit/${doc.id}`)
+      autoLoadLatest(doc)
     } catch {
-      // fallback: create doc with just the ID as name
       const doc = createDefaultDocument(nanoid(), `Work Item ${wiId}`)
+      doc.adoWorkItemId = wiId
       saveDocument(doc)
       navigate(`/edit/${doc.id}`)
     }
+  }
+
+  async function autoLoadLatest(doc: TestDocument) {
+    try {
+      if (doc.adoWorkItemId) {
+        const { iterations } = await fetchTestCasesField(doc.adoWorkItemId)
+        if (iterations.length > 0) {
+          const latest = iterations.reduce((a, b) => b.number > a.number ? b : a)
+          const parsed = parseIterationHtml(latest.content)
+          doc.header = { ...doc.header, ...parsed.header }
+          doc.notes = parsed.notes
+          doc.matrixSections = parsed.matrixSections
+        }
+      }
+    } catch { /* proceed without iteration data */ }
+    saveDocument(doc)
+    navigate(`/edit/${doc.id}`)
   }
 
   function handleDelete(id: string) {

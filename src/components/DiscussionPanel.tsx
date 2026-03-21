@@ -93,11 +93,18 @@ export default function DiscussionPanel({ workItemId }: Props) {
       <div className={styles.composer}>
         <textarea
           className={styles.composerInput}
+          ref={el => {
+            if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px" }
+          }}
           value={newComment}
-          onChange={e => setNewComment(e.target.value)}
+          onChange={e => {
+            setNewComment(e.target.value)
+            e.target.style.height = "auto"
+            e.target.style.height = e.target.scrollHeight + "px"
+          }}
           onKeyDown={handleKeyDown}
           placeholder="Add a comment... (Ctrl+Enter to send)"
-          rows={3}
+          rows={1}
         />
         <button
           className={styles.sendBtn}

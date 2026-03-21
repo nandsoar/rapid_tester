@@ -1,7 +1,8 @@
-import { useState, useMemo } from "react"
+import { useState, useMemo, useEffect, useRef } from "react"
 import { ChevronDown, ChevronUp } from "lucide-react"
 import { marked } from "marked"
 import clsx from "clsx"
+import { downloadAttachment } from "../ado"
 import styles from "./WorkItemDrawer.module.scss"
 
 /** Compact metadata fields shown at the top */
@@ -142,10 +143,7 @@ export default function WorkItemPanel({ fields, workItemId }: Props) {
 
           <div className={styles.tabContent}>
             {activeValue && isHtml(activeValue) ? (
-              <div
-                className={styles.richContent}
-                dangerouslySetInnerHTML={{ __html: sanitizeHtml(activeValue) }}
-              />
+              <RichHtmlContent html={activeValue} />
             ) : activeValue ? (
               <RenderedMarkdown text={activeValue} />
             ) : null}
@@ -170,6 +168,59 @@ function RenderedMarkdown({ text }: { text: string }) {
     <div
       className={styles.richContent}
       dangerouslySetInnerHTML={{ __html: html }}
+    />
+  )
+}
+
+/** Renders sanitized HTML and resolves ADO attachment images with PAT auth */
+function RichHtmlContent({ html }: { html: string }) {
+  const [resolvedHtml, setResolvedHtml] = useState(() => sanitizeHtml(html))
+  const cache = useRef(new Map<string, string>())
+
+  useEffect(() => {
+    let cancelled = false
+    const sanitized = sanitizeHtml(html)
+
+    // Find all ADO attachment URLs in the HTML string
+    const urlRegex = /src="([^"]*\/_apis\/wit\/attachments\/[^"]*)"/g
+    const urls = new Set<string>()
+    let m: RegExpExecArray | null
+    while ((m = urlRegex.exec(sanitized))) urls.add(m[1])
+
+    if (urls.size === 0) {
+      setResolvedHtml(sanitized)
+      return
+    }
+
+    // Show sanitized HTML immediately (images will be broken briefly)
+    setResolvedHtml(sanitized)
+
+    ;(async () => {
+      let result = sanitized
+      for (const url of urls) {
+        if (cancelled) return
+        if (cache.current.has(url)) {
+          result = result.replaceAll(url, cache.current.get(url)!)
+          continue
+        }
+        try {
+          const dataUrl = await downloadAttachment(url)
+          cache.current.set(url, dataUrl)
+          result = result.replaceAll(url, dataUrl)
+        } catch {
+          // leave as-is (will show broken image)
+        }
+      }
+      if (!cancelled) setResolvedHtml(result)
+    })()
+
+    return () => { cancelled = true }
+  }, [html])
+
+  return (
+    <div
+      className={styles.richContent}
+      dangerouslySetInnerHTML={{ __html: resolvedHtml }}
     />
   )
 }
@@ -208,7 +259,11 @@ function sanitizeHtml(html: string): string {
             }
             if (name === "href" || name === "src") {
               const val = attr.value.trim().toLowerCase()
-              if (val.startsWith("javascript:") || val.startsWith("data:")) {
+              if (val.startsWith("javascript:")) {
+                el.removeAttribute(attr.name)
+              }
+              // Allow data: on img src (resolved ADO attachments), block elsewhere
+              if (val.startsWith("data:") && !(tag === "img" && name === "src")) {
                 el.removeAttribute(attr.name)
               }
             }

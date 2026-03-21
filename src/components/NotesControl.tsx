@@ -1,3 +1,4 @@
+import MarkdownInput from "./MarkdownInput"
 import styles from "./NotesControl.module.scss"
 
 interface Props {
@@ -9,12 +10,10 @@ export default function NotesControl({ value, onChange }: Props) {
   return (
     <section className={styles.root}>
       <h3 className={styles.label}>Notes</h3>
-      <textarea
-        className={styles.textarea}
+      <MarkdownInput
         value={value}
-        onChange={e => onChange(e.target.value)}
+        onChange={onChange}
         placeholder="General notes, context, or observations..."
-        rows={4}
       />
     </section>
   )

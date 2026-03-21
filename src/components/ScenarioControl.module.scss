@@ -155,10 +155,12 @@
     border-radius: var(--radius);
     font-size: 13px;
     font-family: var(--font-sans);
-    resize: vertical;
+    resize: none;
+    overflow-y: auto;
     outline: none;
     transition: border-color 0.15s;
     min-height: 36px;
+    max-height: 300px;
 
     &:focus {
       border-color: var(--color-primary);

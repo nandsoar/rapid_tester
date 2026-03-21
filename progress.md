@@ -1,9 +1,8 @@
 ## Features
-- [x] basic markdown generation 
-- [x] matrix generation
 - [ ] field auto completion given database
 - [ ] image optimizations and previews
-- [ ] test sessions iterations
+- [ ] auto-complete sql tables
+- [ ] integrate with the code base for full autocompletion
 
 ---
 

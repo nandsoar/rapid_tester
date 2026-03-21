@@ -157,6 +157,18 @@
   color: var(--color-text-secondary);
 }
 
+.checkboxRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+  }
+}
+
 .queryList {
   display: flex;
   flex-direction: column;
