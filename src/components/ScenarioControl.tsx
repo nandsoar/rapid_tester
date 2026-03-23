@@ -85,15 +85,24 @@ export default function ScenarioControl({
     const view = editorViews.current[fieldKey]
     const ref = `![${img.name}](img:${img.id})`
     if (view) {
-      const pos = view.state.selection.main.head
+      const { from, to } = view.state.selection.main
+      const doc = view.state.doc.toString()
+      const before = doc.slice(0, from)
+      const lineStart = before.lastIndexOf("\n") + 1
+      const linePrefix = before.slice(lineStart)
+      // Strip all trailing spaces, then add exactly one if there's text
+      const trimmed = linePrefix.replace(/ +$/, "")
+      const spaceCount = linePrefix.length - trimmed.length
+      const deleteFrom = from - spaceCount
+      const insert = (trimmed.length > 0 ? " " : "") + ref
       view.dispatch({
-        changes: { from: pos, insert: ref },
-        selection: { anchor: pos + ref.length },
+        changes: { from: deleteFrom, to, insert },
+        selection: { anchor: deleteFrom + insert.length },
       })
       view.focus()
     } else {
       const current = (scenario as unknown as Record<string, unknown>)[fieldKey] as string ?? ""
-      update(fieldKey as keyof ScenarioData, current + (current ? "\n" : "") + ref)
+      update(fieldKey as keyof ScenarioData, current + (current ? " " : "") + ref)
     }
     setPickerField(null)
   }
@@ -128,6 +137,9 @@ export default function ScenarioControl({
   // Save image AND insert reference into a specific field
   function addImageAndInsert(file: File, fieldKey: string) {
     if (!file.type.startsWith("image/")) return
+    // Capture cursor position NOW before async work
+    const view = editorViews.current[fieldKey]
+    const cursorPos = view ? view.state.selection.main.from : -1
     const reader = new FileReader()
     reader.onload = async () => {
       const raw = reader.result as string
@@ -142,15 +154,20 @@ export default function ScenarioControl({
         name: imgName,
       }
       const ref = `![${imgName}](img:${img.id})`
-      const view = editorViews.current[fieldKey]
       const current = (scenario as unknown as Record<string, unknown>)[fieldKey] as string ?? ""
       let newVal: string
-      if (view) {
-        const pos = view.state.selection.main.head
-        const docText = view.state.doc.toString()
-        newVal = docText.slice(0, pos) + ref + docText.slice(pos)
+      if (cursorPos >= 0 && cursorPos <= current.length) {
+        const before = current.slice(0, cursorPos)
+        const lineStart = before.lastIndexOf("\n") + 1
+        const linePrefix = before.slice(lineStart)
+        // Strip all trailing spaces, then add exactly one if there's text
+        const trimmed = linePrefix.replace(/ +$/, "")
+        const spaceCount = linePrefix.length - trimmed.length
+        const adjustedPos = cursorPos - spaceCount
+        const prefix = trimmed.length > 0 ? " " : ""
+        newVal = current.slice(0, adjustedPos) + prefix + ref + current.slice(cursorPos)
       } else {
-        newVal = current + (current ? "\n" : "") + ref
+        newVal = current + (current ? " " : "") + ref
       }
       onChange({
         ...scenario,
@@ -158,13 +175,6 @@ export default function ScenarioControl({
         images: [...(scenario.images ?? []), img],
       })
       tryUploadToAdo(img, compressed)
-      if (view) {
-        requestAnimationFrame(() => {
-          const pos = view.state.selection.main.head + ref.length
-          view.dispatch({ selection: { anchor: pos } })
-          view.focus()
-        })
-      }
     }
     reader.readAsDataURL(file)
   }
@@ -235,9 +245,68 @@ export default function ScenarioControl({
   }
 
   const isNA = scenario.status === "n-a"
+  const sectionRef = useRef<HTMLElement>(null)
+  const activeFieldRef = useRef<string | null>(null)
+  const insertInputRef = useRef<HTMLInputElement>(null)
+
+  // Track which CodeMirror field is focused
+  function trackFocus(fieldKey: string) {
+    return (view: EditorView | null) => {
+      editorViews.current[fieldKey] = view
+      if (!view) return
+      view.dom.addEventListener("focus", () => { activeFieldRef.current = fieldKey }, true)
+    }
+  }
+
+  // Ctrl/Cmd+Shift+I to open image picker for the active text field
+  // Ctrl+I to open image picker for the active text field
+  useEffect(() => {
+    const el = sectionRef.current
+    if (!el) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.ctrlKey && !e.metaKey && !e.shiftKey && (e.key === "i" || e.key === "I")) {
+        if (!el.contains(document.activeElement)) return
+        e.preventDefault()
+        e.stopPropagation()
+        const field = activeFieldRef.current || "steps"
+        if ((scenario.images ?? []).length > 0) {
+          setPickerField(prev => prev === field ? null : field)
+        } else {
+          insertInputRef.current?.click()
+        }
+      }
+    }
+    document.addEventListener("keydown", handler, true)
+    return () => document.removeEventListener("keydown", handler, true)
+  }, [scenario.images])
+
+  // Escape to close picker (capture on document so it fires before CodeMirror)
+  useEffect(() => {
+    if (!pickerField) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation()
+        setPickerField(null)
+      }
+    }
+    document.addEventListener("keydown", handler, true)
+    return () => document.removeEventListener("keydown", handler, true)
+  }, [pickerField])
+
+  function handleInsertInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files
+    if (!files) return
+    const field = activeFieldRef.current || "steps"
+    for (const file of files) {
+      if (file.type.startsWith("image/")) {
+        addImageAndInsert(file, field)
+      }
+    }
+    e.target.value = ""
+  }
 
   return (
-    <section className={`${styles.root} ${isNA ? styles.dimmed : ""}`}>
+    <section ref={sectionRef} className={`${styles.root} ${isNA ? styles.dimmed : ""}`}>
       <div className={styles.titleRow}>
         <span className={styles.scenarioLabel}>Scenario {index + 1}</span>
         <input
@@ -325,7 +394,7 @@ export default function ScenarioControl({
                 onChange={val => update(f.key as keyof ScenarioData, val)}
                 onPaste={handleFieldPaste(f.key)}
                 onDrop={handleFieldDrop(f.key)}
-                editorViewRef={view => { editorViews.current[f.key] = view }}
+                editorViewRef={trackFocus(f.key)}
                 placeholder={f.placeholder}
               />
             </div>
@@ -358,6 +427,14 @@ export default function ScenarioControl({
               if (e.target.files) addImages(e.target.files)
               e.target.value = ""
             }}
+          />
+          <input
+            ref={insertInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={handleInsertInput}
           />
         </div>
         {(scenario.images ?? []).length > 0 && (

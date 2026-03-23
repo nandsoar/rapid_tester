@@ -25,7 +25,8 @@ export const DEFAULT_TEMPLATE: TemplateConfig = {
   name: "Default",
   headerFields: [
     { key: "testEngineer", label: "Test Engineer", type: "text", placeholder: "Name..." },
-    { key: "testEnvironment", label: "Test Environment", type: "text", placeholder: "e.g. Staging, Production..." },
+    { key: "testEnvironment", label: "Test Database", type: "text", placeholder: "e.g. Staging, Production..." },
+    { key: "computer", label: "Computer", type: "text", placeholder: "e.g. PC-01, MacBook..." },
     { key: "date", label: "Date", type: "date" },
     { key: "buildVersion", label: "Build / Version", type: "text", placeholder: "e.g. v1.2.3..." },
   ],

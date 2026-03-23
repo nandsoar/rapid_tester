@@ -96,9 +96,32 @@ export default function MarkdownInput({
     if (onPaste) dom.addEventListener("paste", pasteHandler)
     if (onDrop) dom.addEventListener("drop", dropHandler)
 
+    // Save cursor state before hiding (edit→preview)
+    const saveState = () => {
+      const sel = view.state.selection.main
+      dom.dataset.cmAnchor = String(sel.anchor)
+      dom.dataset.cmHead = String(sel.head)
+      dom.dataset.cmFocused = view.hasFocus ? "1" : ""
+    }
+    // Restore cursor state after unhiding (preview→edit)
+    const restoreState = () => {
+      view.requestMeasure()
+      const anchor = Number(dom.dataset.cmAnchor ?? 0)
+      const head = Number(dom.dataset.cmHead ?? 0)
+      const maxPos = view.state.doc.length
+      view.dispatch({
+        selection: { anchor: Math.min(anchor, maxPos), head: Math.min(head, maxPos) },
+      })
+      if (dom.dataset.cmFocused) view.focus()
+    }
+    window.addEventListener("cm-save", saveState)
+    window.addEventListener("cm-restore", restoreState)
+
     return () => {
       if (onPaste) dom.removeEventListener("paste", pasteHandler)
       if (onDrop) dom.removeEventListener("drop", dropHandler)
+      window.removeEventListener("cm-save", saveState)
+      window.removeEventListener("cm-restore", restoreState)
       editorViewRef?.(null)
     }
   }, [onPaste, onDrop, editorViewRef])

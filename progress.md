@@ -4,9 +4,20 @@
 - [ ] auto-complete sql tables
 - [ ] integrate with the code base for full autocompletion
 
+- [ ] document wide data
+- [ ] swithcing iterations while in preview
+- [ ] reading formatting bugged 
+
 ---
 
 ## Improvement Plan
+  sada
+  - 
+1. dsad
+   - asdasd
+2. asjdoas
+   - ano
+
 
 ### 1. Work Item Import → Autopopulate Header
 - Import ADO work items (JSON from REST API or pasted)

@@ -4,6 +4,17 @@ import { DEFAULT_TEMPLATE } from "./types"
 
 marked.setOptions({ breaks: true, gfm: true })
 
+const renderer = new marked.Renderer()
+renderer.image = ({ href, title, text }) => {
+  const alt = text ? ` alt="${text}"` : ""
+  const ttl = title ? ` title="${title}"` : ""
+  return `<img src="${href}"${alt}${ttl} style="width:320px;height:200px;object-fit:contain;border:1px solid #ddd;border-radius:4px;background:#f5f5f5;display:inline-block;vertical-align:bottom;margin:4px 2px;" />`
+}
+
+function mdToHtml(text: string): string {
+  return marked.parse(text, { async: false, renderer }) as string
+}
+
 function statusEmoji(status: string): string {
   switch (status) {
     case "pass":
@@ -40,10 +51,6 @@ function esc(text: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
-}
-
-function mdToHtml(text: string): string {
-  return marked.parse(text, { async: false }) as string
 }
 
 export type ImageResolveMode = "local" | "ado"

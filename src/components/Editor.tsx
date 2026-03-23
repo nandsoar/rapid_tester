@@ -33,6 +33,29 @@ export default function Editor() {
   const [dirtyIterations, setDirtyIterations] = useState<Set<string>>(new Set())
   const [localImageData, setLocalImageData] = useState(new Map<string, string>())
 
+  const [previewHtml, setPreviewHtml] = useState("")
+
+  function togglePreview() {
+    setShowPreview(p => {
+      if (!p) {
+        window.dispatchEvent(new CustomEvent("cm-save"))
+      } else {
+        requestAnimationFrame(() => {
+          window.dispatchEvent(new CustomEvent("cm-restore"))
+        })
+      }
+      return !p
+    })
+  }
+
+  // Generate preview HTML after toggling into preview mode
+  useEffect(() => {
+    if (showPreview && doc) {
+      const html = generateHtml(doc, undefined, "local", localImageData)
+      setPreviewHtml(html)
+    }
+  }, [showPreview])
+
   function markDirty() {
     if (!activeIteration) return
     setDirtyIterations(prev => {
@@ -146,6 +169,20 @@ export default function Editor() {
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
   }, [dirtyIterations.size])
+
+  // Ctrl/Cmd+E to toggle preview
+  const toggleRef = useRef(togglePreview)
+  toggleRef.current = togglePreview
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "e") {
+        e.preventDefault()
+        toggleRef.current()
+      }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [])
 
   async function refreshWorkItemFields() {
     if (!doc?.adoWorkItemId) return
@@ -289,7 +326,7 @@ export default function Editor() {
     persist({
       ...doc,
       header: { ...doc.header },
-      notes: "",
+      notes: doc.notes,
       matrixSections: blankSections,
     })
     setDirtyIterations(prev => {
@@ -385,7 +422,7 @@ export default function Editor() {
         <div className={styles.actions}>
           <button
             className={styles.toolbarBtn}
-            onClick={() => setShowPreview(p => !p)}
+            onClick={() => togglePreview()}
           >
             {showPreview ? <Pencil size={16} /> : <Eye size={16} />}
             {showPreview ? "Edit" : "Preview"}
@@ -452,12 +489,15 @@ export default function Editor() {
         )}
 
         <main className={styles.center}>
-          {showPreview ? (
-            <div
-              className={styles.htmlPreview}
-              dangerouslySetInnerHTML={{ __html: generateHtml(doc, undefined, "local", localImageData) }}
-            />
-          ) : (
+          {showPreview && (
+            <div className={styles.scrollPane}>
+              <div
+                className={styles.htmlPreview}
+                dangerouslySetInnerHTML={{ __html: previewHtml }}
+              />
+            </div>
+          )}
+          <div className={styles.scrollPane} style={{ display: showPreview ? "none" : undefined }}>
             <div className={styles.controls}>
               <HeaderControl
                 data={doc.header}
@@ -509,7 +549,7 @@ export default function Editor() {
                 Add Matrix Section
               </button>
             </div>
-          )}
+          </div>
         </main>
 
         {hasWorkItem && (

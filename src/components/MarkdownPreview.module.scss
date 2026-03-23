@@ -101,6 +101,14 @@
 
   img {
     max-width: 100%;
+    width: 320px;
+    height: 200px;
+    object-fit: contain;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius);
+    display: inline-block;
+    vertical-align: bottom;
+    margin: 4px 2px;
   }
 }

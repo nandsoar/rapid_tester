@@ -202,49 +202,51 @@
   left: 0;
   z-index: 20;
   margin-top: 4px;
-  padding: 6px;
+  padding: 10px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  max-width: 320px;
+  gap: 8px;
+  max-width: 460px;
+  min-width: 200px;
 }
 
 .imgPickerItem {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 72px;
-  padding: 4px;
+  width: 100px;
+  padding: 6px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   background: var(--color-bg);
   cursor: pointer;
-  transition: border-color 0.12s;
+  transition: border-color 0.12s, box-shadow 0.12s;
 
   &:hover {
     border-color: var(--color-primary);
+    box-shadow: 0 0 0 1px var(--color-primary);
   }
 
   img {
-    width: 64px;
-    height: 48px;
+    width: 88px;
+    height: 66px;
     object-fit: cover;
-    border-radius: 2px;
+    border-radius: 3px;
   }
 
   span {
     display: block;
-    margin-top: 2px;
-    font-size: 9px;
+    margin-top: 4px;
+    font-size: 10px;
     color: var(--color-text-secondary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 64px;
+    max-width: 88px;
   }
 }
 
