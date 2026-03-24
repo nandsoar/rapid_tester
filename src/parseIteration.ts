@@ -80,11 +80,12 @@ export function parseIterationHtml(html: string): {
       const title = (el.textContent ?? "").trim()
 
       if (title.toLowerCase() === "notes") {
-        // Collect everything until next h2
+        // Collect everything until next h2, preserving code blocks and formatting
         i++
         const noteParts: string[] = []
+        const dummyImages: import("./types").ScenarioImage[] = []
         while (i < children.length && children[i].tagName !== "H2") {
-          noteParts.push(children[i].textContent ?? "")
+          noteParts.push(extractTextWithImages(children[i], dummyImages))
           i++
         }
         notes = noteParts.join("\n").trim()
@@ -303,7 +304,7 @@ function extractTextWithImages(el: Element, images: ScenarioImage[]): string {
   }
   if (el.tagName === "PRE") {
     const code = el.querySelector("code")
-    const codeText = code ? (code.textContent ?? "") : (el.textContent ?? "")
+    const codeText = (code ? (code.textContent ?? "") : (el.textContent ?? "")).replace(/\n$/, "")
     const langClass = code?.getAttribute("class") ?? ""
     const langMatch = langClass.match(/language-(\w+)/)
     const lang = langMatch ? langMatch[1] : ""
@@ -337,7 +338,7 @@ function extractTextWithImages(el: Element, images: ScenarioImage[]): string {
         parts.push(extractList(child, images, 0))
       } else if (child.tagName === "PRE") {
         const code = child.querySelector("code")
-        const codeText = code ? (code.textContent ?? "") : (child.textContent ?? "")
+        const codeText = (code ? (code.textContent ?? "") : (child.textContent ?? "")).replace(/\n$/, "")
         // Detect language from class like "language-sql"
         const langClass = code?.getAttribute("class") ?? ""
         const langMatch = langClass.match(/language-(\w+)/)
@@ -383,7 +384,7 @@ function extractList(list: Element, images: ScenarioImage[], depth: number): str
             blockParts.push(extractList(el, images, depth + 1))
           } else if (el.tagName === "PRE") {
             const code = el.querySelector("code")
-            const codeText = code ? (code.textContent ?? "") : (el.textContent ?? "")
+            const codeText = (code ? (code.textContent ?? "") : (el.textContent ?? "")).replace(/\n$/, "")
             const langClass = code?.getAttribute("class") ?? ""
             const langMatch = langClass.match(/language-(\w+)/)
             const lang = langMatch ? langMatch[1] : ""
