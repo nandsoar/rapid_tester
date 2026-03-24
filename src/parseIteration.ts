@@ -297,6 +297,19 @@ function mapFieldLabel(label: string): string | null {
  * ScenarioImage objects and ![name](img:id) markdown references.
  */
 function extractTextWithImages(el: Element, images: ScenarioImage[]): string {
+  // Handle the element itself if it's a block-level list or code block
+  if (el.tagName === "OL" || el.tagName === "UL") {
+    return extractList(el, images, 0)
+  }
+  if (el.tagName === "PRE") {
+    const code = el.querySelector("code")
+    const codeText = code ? (code.textContent ?? "") : (el.textContent ?? "")
+    const langClass = code?.getAttribute("class") ?? ""
+    const langMatch = langClass.match(/language-(\w+)/)
+    const lang = langMatch ? langMatch[1] : ""
+    return `\`\`\`${lang}\n${codeText}\n\`\`\``
+  }
+
   const parts: string[] = []
 
   for (const node of Array.from(el.childNodes)) {
@@ -317,6 +330,27 @@ function extractTextWithImages(el: Element, images: ScenarioImage[]): string {
           })
           parts.push(`![${alt}](img:${imgId})`)
         }
+      } else if (child.tagName === "OL" || child.tagName === "UL") {
+        // Ensure nested list starts on its own line
+        const last = parts[parts.length - 1]
+        if (last && !last.endsWith("\n")) parts.push("\n")
+        parts.push(extractList(child, images, 0))
+      } else if (child.tagName === "PRE") {
+        const code = child.querySelector("code")
+        const codeText = code ? (code.textContent ?? "") : (child.textContent ?? "")
+        // Detect language from class like "language-sql"
+        const langClass = code?.getAttribute("class") ?? ""
+        const langMatch = langClass.match(/language-(\w+)/)
+        const lang = langMatch ? langMatch[1] : ""
+        parts.push(`\n\`\`\`${lang}\n${codeText}\n\`\`\`\n`)
+      } else if (child.tagName === "CODE") {
+        parts.push(`\`${child.textContent ?? ""}\``)
+      } else if (child.tagName === "STRONG" || child.tagName === "B") {
+        parts.push(`**${child.textContent ?? ""}**`)
+      } else if (child.tagName === "EM" || child.tagName === "I") {
+        parts.push(`*${child.textContent ?? ""}*`)
+      } else if (child.tagName === "BR") {
+        parts.push("\n")
       } else {
         // Recurse into child elements
         parts.push(extractTextWithImages(child, images))
@@ -325,4 +359,53 @@ function extractTextWithImages(el: Element, images: ScenarioImage[]): string {
   }
 
   return parts.join("")
+}
+
+function extractList(list: Element, images: ScenarioImage[], depth: number): string {
+  const ordered = list.tagName === "OL"
+  const lines: string[] = []
+  let index = 1
+  const indent = "    ".repeat(depth)
+
+  for (const node of Array.from(list.children)) {
+    if (node.tagName === "LI") {
+      const prefix = ordered ? `${index}. ` : "- "
+      // Separate direct text/inline content from nested block elements
+      const inlineParts: string[] = []
+      const blockParts: string[] = []
+
+      for (const child of Array.from(node.childNodes)) {
+        if (child.nodeType === Node.TEXT_NODE) {
+          inlineParts.push(child.textContent ?? "")
+        } else if (child.nodeType === Node.ELEMENT_NODE) {
+          const el = child as Element
+          if (el.tagName === "OL" || el.tagName === "UL") {
+            blockParts.push(extractList(el, images, depth + 1))
+          } else if (el.tagName === "PRE") {
+            const code = el.querySelector("code")
+            const codeText = code ? (code.textContent ?? "") : (el.textContent ?? "")
+            const langClass = code?.getAttribute("class") ?? ""
+            const langMatch = langClass.match(/language-(\w+)/)
+            const lang = langMatch ? langMatch[1] : ""
+            const codeIndent = "    ".repeat(depth + 1)
+            blockParts.push(`\n${codeIndent}\`\`\`${lang}\n${codeText.split("\n").map(l => codeIndent + l).join("\n")}\n${codeIndent}\`\`\`\n`)
+          } else {
+            inlineParts.push(extractTextWithImages(el, images))
+          }
+        }
+      }
+
+      const inlineText = inlineParts.join("").trim()
+      lines.push(`${indent}${prefix}${inlineText}`)
+      for (const block of blockParts) {
+        lines.push(block)
+      }
+      index++
+    }
+  }
+
+  // Ensure list is separated from surrounding text
+  let result = lines.join("\n")
+  if (result && !result.endsWith("\n")) result += "\n"
+  return result
 }

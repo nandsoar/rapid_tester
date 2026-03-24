@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from "react"
+import { useRef, useState, useEffect, memo, useCallback } from "react"
 import { nanoid } from "nanoid"
 import { ChevronDown, Trash2, ImagePlus, X, Image, Loader2 } from "lucide-react"
 import type { EditorView } from "@codemirror/view"
@@ -11,8 +11,9 @@ import styles from "./ScenarioControl.module.scss"
 interface Props {
   index: number
   scenario: ScenarioData
-  onChange: (scenario: ScenarioData) => void
-  onDelete: () => void
+  sectionId: string
+  onScenarioChange: (sectionId: string, scenario: ScenarioData) => void
+  onScenarioDelete: (sectionId: string, scenarioId: string) => void
 }
 
 const STATUS_OPTIONS: { value: ScenarioStatus; label: string }[] = [
@@ -23,12 +24,21 @@ const STATUS_OPTIONS: { value: ScenarioStatus; label: string }[] = [
   { value: "n-a", label: "N/A" },
 ]
 
-export default function ScenarioControl({
+export default memo(function ScenarioControl({
   index,
   scenario,
-  onChange,
-  onDelete,
+  sectionId,
+  onScenarioChange,
+  onScenarioDelete,
 }: Props) {
+  const onChange = useCallback(
+    (updated: ScenarioData) => onScenarioChange(sectionId, updated),
+    [sectionId, onScenarioChange],
+  )
+  const onDelete = useCallback(
+    () => onScenarioDelete(sectionId, scenario.id),
+    [sectionId, scenario.id, onScenarioDelete],
+  )
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editorViews = useRef<Record<string, EditorView | null>>({})
   const [pickerField, setPickerField] = useState<string | null>(null)
@@ -81,16 +91,40 @@ export default function ScenarioControl({
       })
   }
 
+  /** Find the full ![...](img:...) range if the cursor sits inside one */
+  function findImageRefAtCursor(view: EditorView): { from: number; to: number } | null {
+    const pos = view.state.selection.main.from
+    const doc = view.state.doc.toString()
+    const imgRefRegex = /!\[[^\]]*\]\(img:[a-zA-Z0-9_-]+\)/g
+    let m
+    while ((m = imgRefRegex.exec(doc)) !== null) {
+      if (pos >= m.index && pos <= m.index + m[0].length) {
+        return { from: m.index, to: m.index + m[0].length }
+      }
+    }
+    return null
+  }
+
   function insertImageRef(fieldKey: string, img: ScenarioImage) {
     const view = editorViews.current[fieldKey]
     const ref = `![${img.name}](img:${img.id})`
     if (view) {
+      // If cursor is inside an existing image ref, replace it
+      const existing = findImageRefAtCursor(view)
+      if (existing) {
+        view.dispatch({
+          changes: { from: existing.from, to: existing.to, insert: ref },
+          selection: { anchor: existing.from + ref.length },
+        })
+        view.focus()
+        setPickerField(null)
+        return
+      }
       const { from, to } = view.state.selection.main
       const doc = view.state.doc.toString()
       const before = doc.slice(0, from)
       const lineStart = before.lastIndexOf("\n") + 1
       const linePrefix = before.slice(lineStart)
-      // Strip all trailing spaces, then add exactly one if there's text
       const trimmed = linePrefix.replace(/ +$/, "")
       const spaceCount = linePrefix.length - trimmed.length
       const deleteFrom = from - spaceCount
@@ -258,28 +292,6 @@ export default function ScenarioControl({
     }
   }
 
-  // Ctrl/Cmd+Shift+I to open image picker for the active text field
-  // Ctrl+I to open image picker for the active text field
-  useEffect(() => {
-    const el = sectionRef.current
-    if (!el) return
-    const handler = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.metaKey && !e.shiftKey && (e.key === "i" || e.key === "I")) {
-        if (!el.contains(document.activeElement)) return
-        e.preventDefault()
-        e.stopPropagation()
-        const field = activeFieldRef.current || "steps"
-        if ((scenario.images ?? []).length > 0) {
-          setPickerField(prev => prev === field ? null : field)
-        } else {
-          insertInputRef.current?.click()
-        }
-      }
-    }
-    document.addEventListener("keydown", handler, true)
-    return () => document.removeEventListener("keydown", handler, true)
-  }, [scenario.images])
-
   // Escape to close picker (capture on document so it fires before CodeMirror)
   useEffect(() => {
     if (!pickerField) return
@@ -404,9 +416,11 @@ export default function ScenarioControl({
 
       <div
         className={styles.imagesSection}
+        tabIndex={0}
         onPaste={handleRepoPaste}
         onDrop={handleRepoDrop}
-        onDragOver={e => e.preventDefault()}
+        onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add(styles.dragOver) }}
+        onDragLeave={e => e.currentTarget.classList.remove(styles.dragOver)}
       >
         <div className={styles.imagesHeader}>
           <label>Attachments</label>
@@ -440,11 +454,19 @@ export default function ScenarioControl({
         {(scenario.images ?? []).length > 0 && (
           <div className={styles.imageGrid}>
             {(scenario.images ?? []).map(img => (
-              <div key={img.id} className={styles.imageThumb}>
+              <div
+                key={img.id}
+                className={styles.imageThumb}
+                onClick={() => {
+                  const field = activeFieldRef.current || "steps"
+                  insertImageRef(field, img)
+                }}
+                title={`Click to insert ${img.name}`}
+              >
                 <img src={img.data || imgDataCache.get(img.id) || img.adoUrl} alt={img.name} />
                 <button
                   className={styles.imageRemove}
-                  onClick={() => removeImage(img.id)}
+                  onClick={(e) => { e.stopPropagation(); removeImage(img.id) }}
                 >
                   <X size={12} />
                 </button>
@@ -461,9 +483,12 @@ export default function ScenarioControl({
           </div>
         )}
         {(scenario.images ?? []).length === 0 && (
-          <div className={styles.dropHint}>Paste or drop images here</div>
+          <div className={styles.dropHint}>
+            <ImagePlus size={20} />
+            <span>Click here and press Ctrl+V to paste, or drag & drop images</span>
+          </div>
         )}
       </div>
     </section>
   )
-}
+})

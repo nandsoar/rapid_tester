@@ -1,17 +1,17 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import { nanoid } from "nanoid"
-import { ArrowLeft, Plus, Eye, Pencil, Upload, History, Check } from "lucide-react"
+import { ArrowLeft, Plus, Eye, Pencil, Upload, History, Check, X, FileText } from "lucide-react"
 import { loadDocument, saveDocument } from "../storage"
 import type { TestDocument, HeaderData, MatrixSection, ScenarioData } from "../types"
 import HeaderControl from "./HeaderControl"
 import NotesControl from "./NotesControl"
 import MatrixControl from "./MatrixControl"
 import ScenarioControl from "./ScenarioControl"
-import { generateHtml } from "../markdown"
+import { generateHtml, generateMarkdown } from "../markdown"
 import WorkItemPanel from "./WorkItemDrawer"
 import DiscussionPanel from "./DiscussionPanel"
-import { uploadAttachment, pushTestCases, fetchTestCasesField, fetchWorkItem, downloadAttachment } from "../ado"
+import { uploadAttachment, pushTestCases, fetchTestCasesField, fetchWorkItem, downloadAttachment, deleteIteration } from "../ado"
 import type { TestIteration } from "../ado"
 import { parseIterationHtml } from "../parseIteration"
 import { loadImageDataBatch, loadImageData } from "../imageStore"
@@ -22,6 +22,7 @@ export default function Editor() {
   const navigate = useNavigate()
   const [doc, setDoc] = useState<TestDocument | null>(null)
   const [showPreview, setShowPreview] = useState(false)
+  const [showMarkdown, setShowMarkdown] = useState(false)
   const [pushing, setPushing] = useState(false)
   const [pushMsg, setPushMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null)
   const [iterations, setIterations] = useState<TestIteration[]>([])
@@ -34,14 +35,26 @@ export default function Editor() {
   const [localImageData, setLocalImageData] = useState(new Map<string, string>())
 
   const [previewHtml, setPreviewHtml] = useState("")
+  const [markdownSource, setMarkdownSource] = useState("")
+
+  const lastFocused = useRef<Element | null>(null)
 
   function togglePreview() {
     setShowPreview(p => {
       if (!p) {
+        // Entering preview — save focused element
+        lastFocused.current = document.activeElement
         window.dispatchEvent(new CustomEvent("cm-save"))
       } else {
+        // Leaving preview — restore focus
         requestAnimationFrame(() => {
           window.dispatchEvent(new CustomEvent("cm-restore"))
+          // If the focused element was a regular input (not CodeMirror), restore it
+          const el = lastFocused.current
+          if (el instanceof HTMLElement && !el.closest(".cm-editor")) {
+            el.focus()
+          }
+          lastFocused.current = null
         })
       }
       return !p
@@ -56,15 +69,26 @@ export default function Editor() {
     }
   }, [showPreview])
 
-  function markDirty() {
-    if (!activeIteration) return
+  // Generate markdown source when toggling into markdown view
+  useEffect(() => {
+    if (showMarkdown && doc) {
+      setMarkdownSource(generateMarkdown(doc, undefined, "none"))
+    }
+  }, [showMarkdown])
+
+  const activeIterRef = useRef(activeIteration)
+  activeIterRef.current = activeIteration
+
+  const markDirty = useCallback(() => {
+    const iter = activeIterRef.current
+    if (!iter) return
     setDirtyIterations(prev => {
-      if (prev.has(activeIteration)) return prev
+      if (prev.has(iter)) return prev
       const next = new Set(prev)
-      next.add(activeIteration)
+      next.add(iter)
       return next
     })
-  }
+  }, [])
 
   function clearDirty(iter: string) {
     setDirtyIterations(prev => {
@@ -193,13 +217,29 @@ export default function Editor() {
     } catch { /* ignore */ }
   }
 
+  const saveTimer = useRef<ReturnType<typeof setTimeout>>(null)
+  const latestDoc = useRef<TestDocument | null>(null)
+  latestDoc.current = doc
   const persist = useCallback(
     (updated: TestDocument) => {
       setDoc(updated)
-      saveDocument(updated)
+      latestDoc.current = updated
+      if (saveTimer.current) clearTimeout(saveTimer.current)
+      saveTimer.current = setTimeout(() => {
+        saveDocument(updated)
+        saveTimer.current = null
+      }, 400)
     },
     []
   )
+  // Flush pending save on unmount
+  useEffect(() => () => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current)
+      if (latestDoc.current) saveDocument(latestDoc.current)
+      saveTimer.current = null
+    }
+  }, [])
 
   function loadIteration(value: string) {
     if (!doc) return
@@ -347,6 +387,46 @@ export default function Editor() {
     markDirty()
   }
 
+  // Stable callbacks for ScenarioControl (reads from latestDoc ref to avoid stale closures)
+  const handleScenarioChange = useCallback((sectionId: string, updated: ScenarioData) => {
+    const d = latestDoc.current
+    if (!d) return
+    const section = d.matrixSections.find(s => s.id === sectionId)
+    if (!section) return
+    persist({
+      ...d,
+      matrixSections: d.matrixSections.map(s =>
+        s.id === sectionId
+          ? { ...section, scenarios: section.scenarios.map(sc => sc.id === updated.id ? updated : sc) }
+          : s
+      ),
+    })
+    markDirty()
+  }, [persist])
+
+  const handleScenarioDelete = useCallback((sectionId: string, scenarioId: string) => {
+    const d = latestDoc.current
+    if (!d) return
+    const section = d.matrixSections.find(s => s.id === sectionId)
+    if (!section) return
+    persist({
+      ...d,
+      matrixSections: d.matrixSections.map(s =>
+        s.id === sectionId
+          ? { ...section, scenarios: section.scenarios.filter(sc => sc.id !== scenarioId) }
+          : s
+      ),
+    })
+    markDirty()
+  }, [persist])
+
+  const handleHeaderChange = useCallback((header: HeaderData) => {
+    const d = latestDoc.current
+    if (!d) return
+    persist({ ...d, header })
+    markDirty()
+  }, [persist])
+
   function deleteMatrixSection(sectionId: string) {
     if (!doc) return
     persist({
@@ -367,7 +447,7 @@ export default function Editor() {
     const targetIteration = isExisting ? iterNum : null
 
     try {
-      // Upload any images that don't have an ADO URL yet
+      // Upload images to ADO
       let updated = doc
       for (const section of updated.matrixSections) {
         for (const scenario of section.scenarios) {
@@ -385,13 +465,14 @@ export default function Editor() {
       persist(updated)
 
       const content = generateHtml(updated, undefined, "ado")
-      await pushTestCases(doc.adoWorkItemId, content, targetIteration)
-      setPushMsg({ type: "ok", text: "Pushed to ADO successfully" })
+      const pushed = await pushTestCases(doc.adoWorkItemId, content, targetIteration)
+      setPushMsg({ type: "ok", text: pushed ? "Pushed to ADO successfully" : "No changes to push" })
       setTimeout(() => setPushMsg(null), 4000)
       clearDirty(activeIteration)
-      // Refresh iterations dropdown and work item panel
-      refreshIterations()
-      refreshWorkItemFields()
+      if (pushed) {
+        refreshIterations()
+        refreshWorkItemFields()
+      }
     } catch (err) {
       setPushMsg({ type: "err", text: (err as Error).message })
     } finally {
@@ -422,10 +503,17 @@ export default function Editor() {
         <div className={styles.actions}>
           <button
             className={styles.toolbarBtn}
-            onClick={() => togglePreview()}
+            onClick={() => { setShowMarkdown(false); togglePreview() }}
           >
             {showPreview ? <Pencil size={16} /> : <Eye size={16} />}
             {showPreview ? "Edit" : "Preview"}
+          </button>
+          <button
+            className={styles.toolbarBtn}
+            onClick={() => { if (showPreview) togglePreview(); setShowMarkdown(m => !m) }}
+          >
+            <FileText size={16} />
+            {showMarkdown ? "Edit" : "Markdown"}
           </button>
           {hasWorkItem && doc.adoWorkItemId && (
             <button
@@ -476,32 +564,56 @@ export default function Editor() {
             )}
             {iterLoading && <span className={styles.iterRailLoading}>…</span>}
             {iterations.map(it => (
-              <button
-                key={it.number}
-                className={`${styles.iterRailBtn} ${activeIteration === String(it.number) ? styles.iterRailBtnActive : ""} ${dirtyIterations.has(String(it.number)) ? styles.iterRailBtnDirtyDot : ""}`}
-                onClick={() => loadIteration(String(it.number))}
-                title={`Iteration ${it.number} — ${it.timestamp}`}
-              >
-                {it.number}
-              </button>
+              <div key={it.number} className={styles.iterRailItem}>
+                <button
+                  className={`${styles.iterRailBtn} ${activeIteration === String(it.number) ? styles.iterRailBtnActive : ""} ${dirtyIterations.has(String(it.number)) ? styles.iterRailBtnDirtyDot : ""}`}
+                  onClick={() => loadIteration(String(it.number))}
+                  title={`Iteration ${it.number} — ${it.timestamp}`}
+                >
+                  {it.number}
+                </button>
+                <button
+                  className={styles.iterDeleteBtn}
+                  onClick={async (e) => {
+                    e.stopPropagation()
+                    if (!doc?.adoWorkItemId) return
+                    if (!confirm(`Delete Iteration ${it.number} from ADO?`)) return
+                    try {
+                      await deleteIteration(doc.adoWorkItemId, it.number)
+                      if (activeIteration === String(it.number)) {
+                        setActiveIteration("")
+                      }
+                      iterDrafts.current.delete(String(it.number))
+                      clearDirty(String(it.number))
+                      refreshIterations()
+                    } catch (err) {
+                      setPushMsg({ type: "err", text: (err as Error).message })
+                    }
+                  }}
+                  title={`Delete Iteration ${it.number}`}
+                >
+                  <X size={10} />
+                </button>
+              </div>
             ))}
           </nav>
         )}
 
         <main className={styles.center}>
-          {showPreview && (
-            <div className={styles.scrollPane}>
-              <div
-                className={styles.htmlPreview}
-                dangerouslySetInnerHTML={{ __html: previewHtml }}
-              />
-            </div>
-          )}
-          <div className={styles.scrollPane} style={{ display: showPreview ? "none" : undefined }}>
+          <div className={styles.scrollPane} style={{ display: showPreview ? undefined : "none" }}>
+            <div
+              className={styles.htmlPreview}
+              dangerouslySetInnerHTML={{ __html: previewHtml }}
+            />
+          </div>
+          <div className={styles.scrollPane} style={{ display: showMarkdown ? undefined : "none" }}>
+            <pre className={styles.markdownSource}>{markdownSource}</pre>
+          </div>
+          <div className={styles.scrollPane} style={{ display: showPreview || showMarkdown ? "none" : undefined }}>
             <div className={styles.controls}>
               <HeaderControl
                 data={doc.header}
-                onChange={(header: HeaderData) => { persist({ ...doc, header }); markDirty() }}
+                onChange={handleHeaderChange}
               />
 
               <NotesControl
@@ -523,22 +635,9 @@ export default function Editor() {
                       key={scenario.id}
                       index={si}
                       scenario={scenario}
-                      onChange={(updated: ScenarioData) =>
-                        updateMatrixSection(section.id, {
-                          ...section,
-                          scenarios: section.scenarios.map(s =>
-                            s.id === updated.id ? updated : s
-                          ),
-                        })
-                      }
-                      onDelete={() =>
-                        updateMatrixSection(section.id, {
-                          ...section,
-                          scenarios: section.scenarios.filter(
-                            s => s.id !== scenario.id
-                          ),
-                        })
-                      }
+                      sectionId={section.id}
+                      onScenarioChange={handleScenarioChange}
+                      onScenarioDelete={handleScenarioDelete}
                     />
                   ))}
                 </div>

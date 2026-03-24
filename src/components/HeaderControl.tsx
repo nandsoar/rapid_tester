@@ -1,3 +1,4 @@
+import { memo } from "react"
 import type { HeaderData, TemplateConfig } from "../types"
 import { DEFAULT_TEMPLATE } from "../types"
 import styles from "./HeaderControl.module.scss"
@@ -8,7 +9,7 @@ interface Props {
   template?: TemplateConfig
 }
 
-export default function HeaderControl({ data, onChange, template = DEFAULT_TEMPLATE }: Props) {
+export default memo(function HeaderControl({ data, onChange, template = DEFAULT_TEMPLATE }: Props) {
   function update(key: string, value: string) {
     onChange({ ...data, [key]: value })
   }
@@ -31,4 +32,4 @@ export default function HeaderControl({ data, onChange, template = DEFAULT_TEMPL
       </div>
     </section>
   )
-}
+})

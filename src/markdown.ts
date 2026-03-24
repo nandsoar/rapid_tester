@@ -8,7 +8,8 @@ const renderer = new marked.Renderer()
 renderer.image = ({ href, title, text }) => {
   const alt = text ? ` alt="${text}"` : ""
   const ttl = title ? ` title="${title}"` : ""
-  return `<img src="${href}"${alt}${ttl} style="width:320px;height:200px;object-fit:contain;border:1px solid #ddd;border-radius:4px;background:#f5f5f5;display:inline-block;vertical-align:bottom;margin:4px 2px;" />`
+  const img = `<img src="${href}"${alt}${ttl} width="320" style="border:1px solid #ddd;border-radius:4px;display:inline-block;vertical-align:bottom;margin:4px 2px;" />`
+  return `<a href="${href}" target="_blank" rel="noopener">${img}</a>`
 }
 
 function mdToHtml(text: string): string {
@@ -53,7 +54,7 @@ function esc(text: string): string {
     .replace(/"/g, "&quot;")
 }
 
-export type ImageResolveMode = "local" | "ado"
+export type ImageResolveMode = "local" | "ado" | "none"
 
 export function generateHtml(doc: TestDocument, template: TemplateConfig = DEFAULT_TEMPLATE, imageMode: ImageResolveMode = "local", imageDataMap?: Map<string, string>): string {
   const parts: string[] = []
@@ -108,15 +109,28 @@ export function generateHtml(doc: TestDocument, template: TemplateConfig = DEFAU
     )
     if (validParams.length > 0 && section.scenarios.length > 0) {
       const paramNames = validParams.map(p => p.name)
-      const headerCells = [...paramNames, "Expected", "Result"].map(n => `<th>${esc(n)}</th>`).join("")
-      const rows: string[] = []
-      for (const s of section.scenarios) {
-        const vals = paramNames.map(name => `<td>${esc(s.matrixCombo[name] || "—")}</td>`)
-        const expected = `<td>${esc(s.expected.trim() || "—")}</td>`
-        const result = `<td>${statusEmoji(s.status)} ${statusLabel(s.status)}</td>`
-        rows.push(`<tr>${vals.join("")}${expected}${result}</tr>`)
-      }
-      parts.push(`<table>\n<thead><tr>${headerCells}</tr></thead>\n<tbody>${rows.join("\n")}</tbody>\n</table>`)
+      const headers = [...paramNames, "Expected", "Result"]
+      const headerCells = headers.map(n => `<th>${esc(n)}</th>`).join("")
+
+      const dataRows = section.scenarios.map(s => {
+        const vals = paramNames.map(name => esc(s.matrixCombo[name] || "—"))
+        const expected = esc(s.expected.trim() || "—")
+        const result = `${statusEmoji(s.status)} ${statusLabel(s.status)}`
+        return [...vals, expected, result]
+      })
+
+      // Compute column widths for aligned raw HTML
+      const colWidths = headers.map((h, i) =>
+        Math.max(h.length, ...dataRows.map(r => r[i].length))
+      )
+      const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - s.length))
+
+      const headRow = headers.map((h, i) => `<th>${pad(esc(h), colWidths[i])}</th>`).join("")
+      const rows = dataRows.map(row => {
+        const cells = row.map((c, i) => `<td>${pad(c, colWidths[i])}</td>`).join("")
+        return `  <tr>${cells}</tr>`
+      })
+      parts.push(`<table>\n<thead><tr>${headRow}</tr></thead>\n<tbody>\n${rows.join("\n")}\n</tbody>\n</table>`)
     }
 
     // Scenarios detail
@@ -199,13 +213,25 @@ export function generateMarkdown(doc: TestDocument, template: TemplateConfig = D
     )
     if (validParams.length > 0 && section.scenarios.length > 0) {
       const paramNames = validParams.map(p => p.name)
-      lines.push(`| ${paramNames.join(" | ")} | Expected | Result |`)
-      lines.push(`| ${paramNames.map(() => "---").join(" | ")} | --- | --- |`)
+      const headers = [...paramNames, "Expected", "Result"]
 
-      for (const s of section.scenarios) {
+      // Build all rows first to compute column widths
+      const dataRows: string[][] = section.scenarios.map(s => {
         const vals = paramNames.map(name => s.matrixCombo[name] || "—")
         const expected = s.expected.trim() || "—"
-        lines.push(`| ${vals.join(" | ")} | ${expected} | ${statusEmoji(s.status)} ${statusLabel(s.status)} |`)
+        const result = `${statusEmoji(s.status)} ${statusLabel(s.status)}`
+        return [...vals, expected, result]
+      })
+
+      const colWidths = headers.map((h, i) =>
+        Math.max(h.length, ...dataRows.map(r => r[i].length))
+      )
+
+      const pad = (s: string, w: number) => s + " ".repeat(w - s.length)
+      lines.push(`| ${headers.map((h, i) => pad(h, colWidths[i])).join(" | ")} |`)
+      lines.push(`| ${colWidths.map(w => "-".repeat(w)).join(" | ")} |`)
+      for (const row of dataRows) {
+        lines.push(`| ${row.map((c, i) => pad(c, colWidths[i])).join(" | ")} |`)
       }
       lines.push("")
     }
@@ -278,13 +304,15 @@ export function generateMarkdown(doc: TestDocument, template: TemplateConfig = D
       }
     }
   }
-  md = md.replace(/!\[([^\]]*)\]\(img:([a-zA-Z0-9_-]+)\)/g, (_match, alt, id) => {
-    const img = imageMap.get(id)
-    if (!img) return _match
-    const label = alt || img.name
-    const url = imageMode === "ado" && img.adoUrl ? img.adoUrl : (img.data || img.adoUrl || "")
-    return `![${label}](${url})`
-  })
+  if (imageMode !== "none") {
+    md = md.replace(/!\[([^\]]*)\]\(img:([a-zA-Z0-9_-]+)\)/g, (_match, alt, id) => {
+      const img = imageMap.get(id)
+      if (!img) return _match
+      const label = alt || img.name
+      const url = imageMode === "ado" && img.adoUrl ? img.adoUrl : (img.data || img.adoUrl || "")
+      return `![${label}](${url})`
+    })
+  }
 
   return md
 }

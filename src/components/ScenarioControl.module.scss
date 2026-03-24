@@ -252,8 +252,29 @@
 
 .imagesSection {
   margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--color-border);
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+
+  &:focus, &:focus-within {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+
+    .dropHint {
+      border-color: var(--color-primary);
+      color: var(--color-primary);
+      opacity: 1;
+    }
+  }
+}
+
+.dragOver {
+  .dropHint, .imageGrid {
+    border-color: var(--color-primary) !important;
+    background: rgba(37, 99, 235, 0.04);
+  }
 }
 
 .imagesHeader {
@@ -300,6 +321,13 @@
   border-radius: var(--radius);
   overflow: hidden;
   background: var(--color-bg);
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+
+  &:hover {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 1px var(--color-primary);
+  }
 
   img {
     display: block;
@@ -366,11 +394,21 @@
 }
 
 .dropHint {
-  padding: 12px;
-  border: 1px dashed var(--color-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 20px 12px;
+  border: 2px dashed var(--color-border);
   border-radius: var(--radius);
   text-align: center;
   font-size: 12px;
   color: var(--color-text-secondary);
-  opacity: 0.6;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, opacity 0.15s;
+
+  &:hover {
+    border-color: var(--color-border-focus);
+    color: var(--color-text);
+  }
 }

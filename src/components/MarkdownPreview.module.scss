@@ -100,11 +100,10 @@
   }
 
   img {
-    max-width: 100%;
-    width: 320px;
-    height: 200px;
-    object-fit: contain;
-    background: var(--color-bg);
+    max-width: 320px;
+    max-height: 200px;
+    width: auto;
+    height: auto;
     border: 1px solid var(--color-border);
     border-radius: var(--radius);
     display: inline-block;

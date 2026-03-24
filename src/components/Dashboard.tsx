@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
 import { nanoid } from "nanoid"
-import { Plus, FileText, Trash2, Download, Settings, RefreshCw, Loader2, Bug, BookOpen, ClipboardList } from "lucide-react"
+import { FileText, Trash2, Download, Settings, RefreshCw, Loader2, Bug, BookOpen, ClipboardList } from "lucide-react"
 import { loadDocuments, saveDocument, deleteDocument } from "../storage"
 import { createDefaultDocument } from "../types"
 import type { TestDocument } from "../types"
@@ -49,12 +49,6 @@ export default function Dashboard() {
       setQueryLoading(false)
     }
   }, [])
-
-  function handleCreate() {
-    const doc = createDefaultDocument(nanoid(), "Untitled Test Document")
-    saveDocument(doc)
-    navigate(`/edit/${doc.id}`)
-  }
 
   function handleImport(mapped: MappedWorkItem) {
     setShowImport(false)
@@ -126,8 +120,12 @@ export default function Dashboard() {
   return (
     <div className={styles.root}>
       <header className={styles.header}>
-        <h1>Rapid Tester</h1>
+        <h1>RT</h1>
         <div className={styles.headerActions}>
+          <button className={styles.importBtn} onClick={() => setShowImport(true)}>
+            <Download size={18} />
+            Import
+          </button>
           <button
             className={styles.iconBtn}
             onClick={() => navigate("/settings")}
@@ -138,30 +136,18 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <div className={styles.startActions}>
-        <button className={styles.createBtn} onClick={handleCreate}>
-          <Plus size={18} />
-          Blank Document
-        </button>
-        <button className={styles.importBtn} onClick={() => setShowImport(true)}>
-          <Download size={18} />
-          Import Work Item
-        </button>
-      </div>
-
       {savedQueries.length > 0 && (
         <section className={styles.querySection}>
-          <div className={styles.querySectionHeader}>
-            <select
-              className={styles.queryPicker}
-              value={activeQueryId}
-              onChange={e => loadQuery(e.target.value)}
-            >
-              <option value="">Select a query...</option>
-              {savedQueries.map(q => (
-                <option key={q.id} value={q.id}>{q.name}</option>
-              ))}
-            </select>
+          <div className={styles.queryChips}>
+            {savedQueries.map(q => (
+              <button
+                key={q.id}
+                className={`${styles.queryChip} ${activeQueryId === q.id ? styles.queryChipActive : ""}`}
+                onClick={() => loadQuery(activeQueryId === q.id ? "" : q.id)}
+              >
+                {q.name}
+              </button>
+            ))}
             {activeQueryId && (
               <button
                 className={styles.refreshBtn}

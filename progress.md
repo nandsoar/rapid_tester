@@ -6,17 +6,24 @@
 
 - [ ] document wide data
 - [ ] swithcing iterations while in preview
-- [ ] reading formatting bugged 
+- [ ] lost formatting
+- [ ] copy iteration
+
+-- priority
+- move around scenario parameters
+- code blocks parsing
+- insert image into statement
+
 
 ---
 
-## Improvement Plan
-  sada
-  - 
-1. dsad
-   - asdasd
-2. asjdoas
-   - ano
+[SQL] Run a Workload Balancing update and make sure it is logged.
+
+    ```sql
+    EXEC lsp_GovSetOrderTypeTarget @TargetsExternallyManaged = 1, @OrderType = 'GT', @NewValue = '100';
+    select * from sysproperty where Keyword like '%nio%'
+    ```
+
 
 
 ### 1. Work Item Import → Autopopulate Header

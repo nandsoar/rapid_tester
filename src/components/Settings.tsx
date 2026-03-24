@@ -123,19 +123,7 @@ export default function Settings() {
           </ol>
         </div>
 
-        <label className={styles.field}>
-          <div className={styles.checkboxRow}>
-            <input
-              type="checkbox"
-              checked={settings.useMarkdown}
-              onChange={e => update({ useMarkdown: e.target.checked })}
-            />
-            <span>Push as Markdown</span>
-          </div>
-          <span className={styles.fieldHint}>
-            Enable if you converted the Test Cases field to Markdown in ADO
-          </span>
-        </label>
+
       </section>
 
       <section className={styles.section} style={{ marginTop: 16 }}>

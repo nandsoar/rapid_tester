@@ -11,14 +11,13 @@ export interface AdoSettings {
   project: string  // e.g. "NEXiA Fulfillment" — needed for queries
   pat: string
   savedQueries: SavedQuery[]
-  useMarkdown: boolean
 }
 
 export function loadAdoSettings(): AdoSettings {
   const raw = localStorage.getItem(SETTINGS_KEY)
-  if (!raw) return { orgUrl: "", project: "", pat: "", savedQueries: [], useMarkdown: false }
+  if (!raw) return { orgUrl: "", project: "", pat: "", savedQueries: [] }
   const parsed = JSON.parse(raw) as AdoSettings
-  return { savedQueries: [], useMarkdown: false, ...parsed }
+  return { savedQueries: [], ...parsed }
 }
 
 export function saveAdoSettings(settings: AdoSettings): void {
@@ -218,7 +217,11 @@ export function parseIterations(raw: string): { iterations: TestIteration[]; raw
     const end = i + 1 < htmlMarkers.length ? htmlMarkers[i + 1].fullMatchStart : raw.length
     let content = raw.slice(start, end).trim()
     content = content.replace(/<\/div>\s*$/, "").trim()
+    // Strip iteration headers (HTML or Markdown) so buildFieldValue doesn't duplicate them
     content = content.replace(/^<h2>Iteration\s+\d+\s*—\s*[^<]*<\/h2>\s*/i, "").trim()
+    content = content.replace(/^##\s*Iteration\s+\d+\s*—\s*.+$/m, "").trim()
+    // Strip trailing --- separator between iterations
+    content = content.replace(/\n*---\s*$/, "").trim()
     iterations.push({
       number: htmlMarkers[i].number,
       timestamp: htmlMarkers[i].timestamp,
@@ -258,22 +261,19 @@ export function parseIterations(raw: string): { iterations: TestIteration[]; raw
 }
 
 /** Build the full field value with iterations */
-function buildFieldValue(iterations: TestIteration[], markdown: boolean): string {
-  if (markdown) {
-    return iterations
-      .map(it => {
-        const marker = `<!-- rt-iteration ${it.number} | ${it.timestamp} -->`
-        const header = `## Iteration ${it.number} — ${it.timestamp}`
-        return `${marker}\n${header}\n\n${it.content}`
-      })
-      .join("\n\n---\n\n")
-  }
+/** Strip whitespace differences for content comparison */
+function normalizeHtml(html: string): string {
+  return html.replace(/\s+/g, " ").trim()
+}
+
+function buildFieldValue(iterations: TestIteration[]): string {
   return iterations
     .map(it => {
+      const marker = `<div data-rt-iteration="${it.number}" data-rt-ts="${it.timestamp}">`
       const header = `<h2>Iteration ${it.number} — ${it.timestamp}</h2>`
-      return `<div data-rt-iteration="${it.number}" data-rt-ts="${it.timestamp}">\n${header}\n${it.content}\n</div>`
+      return `${marker}\n${header}\n${it.content}\n</div>`
     })
-    .join("\n\n")
+    .join("\n\n---\n\n")
 }
 
 /**
@@ -316,7 +316,7 @@ export async function pushTestCases(
   workItemId: number,
   newContent: string,
   targetIteration: number | null,
-): Promise<void> {
+): Promise<boolean> {
   const settings = loadAdoSettings()
   if (!settings.orgUrl || !settings.pat) {
     throw new Error("ADO settings not configured.")
@@ -344,7 +344,11 @@ export async function pushTestCases(
     }
     updatedIterations = [newIter, ...iterations]
   } else {
-    // Replace existing iteration — keep original timestamp
+    // Replace existing iteration — skip if content unchanged
+    const existing = iterations.find(it => it.number === targetIteration)
+    if (existing && normalizeHtml(existing.content) === normalizeHtml(newContent)) {
+      return false // nothing changed — skip the PATCH to keep ADO history clean
+    }
     updatedIterations = iterations.map(it =>
       it.number === targetIteration
         ? { ...it, content: newContent }
@@ -352,18 +356,14 @@ export async function pushTestCases(
     )
   }
 
-  const useMarkdown = settings.useMarkdown
-
   // If there were no iterations previously and there's legacy content, preserve it
   let combined: string
   if (iterations.length === 0 && raw.trim()) {
-    const newBlock = buildFieldValue(updatedIterations, useMarkdown)
-    const separator = useMarkdown
-      ? "\n\n---\n\n*— Legacy content —*\n\n---\n\n"
-      : '\n\n<hr/><p style="color:#888;font-size:12px;">— Legacy content —</p><hr/>\n\n'
+    const newBlock = buildFieldValue(updatedIterations)
+    const separator = "\n\n---\n\n*— Legacy content —*\n\n---\n\n"
     combined = `${newBlock}${separator}${raw}`
   } else {
-    combined = buildFieldValue(updatedIterations, useMarkdown)
+    combined = buildFieldValue(updatedIterations)
   }
 
   // PATCH the work item
@@ -386,6 +386,47 @@ export async function pushTestCases(
   if (!patchRes.ok) {
     const body = await patchRes.text()
     throw new Error(`Push failed: ${patchRes.status} ${patchRes.statusText}\n${body}`)
+  }
+  return true
+}
+
+/**
+ * Delete an iteration from the Test Cases field.
+ */
+export async function deleteIteration(
+  workItemId: number,
+  iterationNumber: number,
+): Promise<void> {
+  const settings = loadAdoSettings()
+  if (!settings.orgUrl || !settings.pat) {
+    throw new Error("ADO settings not configured.")
+  }
+
+  const orgUrl = settings.orgUrl.replace(/\/+$/, "")
+  const { fieldRef, iterations } = await fetchTestCasesField(workItemId)
+
+  const remaining = iterations.filter(it => it.number !== iterationNumber)
+  const combined = buildFieldValue(remaining)
+
+  const patchUrl = `${orgUrl}/_apis/wit/workitems/${workItemId}?api-version=7.1`
+  const patchRes = await fetch(patchUrl, {
+    method: "PATCH",
+    headers: {
+      "Authorization": `Basic ${btoa(`:${settings.pat}`)}`,
+      "Content-Type": "application/json-patch+json",
+    },
+    body: JSON.stringify([
+      {
+        op: "replace",
+        path: `/fields/${fieldRef}`,
+        value: combined,
+      },
+    ]),
+  })
+
+  if (!patchRes.ok) {
+    const body = await patchRes.text()
+    throw new Error(`Delete failed: ${patchRes.status} ${patchRes.statusText}\n${body}`)
   }
 }
 
