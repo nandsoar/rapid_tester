@@ -96,6 +96,8 @@ export function parseIterationHtml(html: string): {
       const section: MatrixSection = {
         id: nanoid(),
         title,
+        description: "",
+        isPerformance: false,
         parameters: [],
         scenarios: [],
       }

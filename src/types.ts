@@ -47,6 +47,7 @@ export interface MatrixParameter {
   id: string
   name: string
   values: string[]
+  appliesWhen?: { paramId: string; values: string[] }
 }
 
 export interface ScenarioImage {
@@ -66,11 +67,15 @@ export interface ScenarioData {
   setup: string
   steps: string
   images?: ScenarioImage[]
+  perfTrials?: (number | null)[]
+  blockedReason?: string
 }
 
 export interface MatrixSection {
   id: string
   title: string
+  description: string
+  isPerformance: boolean
   parameters: MatrixParameter[]
   scenarios: ScenarioData[]
 }
@@ -85,6 +90,35 @@ export interface TestDocument {
   matrixSections: MatrixSection[]
   adoFields?: Record<string, unknown>
   adoWorkItemId?: number
+}
+
+export interface PerfStats {
+  avg: number | null
+  p50: number | null
+  p95: number | null
+  p99: number | null
+}
+
+export function computePerfStats(trials: (number | null)[] | undefined): PerfStats {
+  const nums = (trials ?? []).filter((v): v is number => v !== null && !isNaN(v)).sort((a, b) => a - b)
+  if (nums.length === 0) return { avg: null, p50: null, p95: null, p99: null }
+  const avg = nums.reduce((a, b) => a + b, 0) / nums.length
+  const percentile = (sorted: number[], p: number) => {
+    const idx = (p / 100) * (sorted.length - 1)
+    const lo = Math.floor(idx)
+    const hi = Math.ceil(idx)
+    return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo)
+  }
+  return {
+    avg,
+    p50: percentile(nums, 50),
+    p95: percentile(nums, 95),
+    p99: percentile(nums, 99),
+  }
+}
+
+export function formatStat(v: number | null): string {
+  return v !== null ? v.toFixed(1) : "\u2014"
 }
 
 export function createDefaultHeader(template: TemplateConfig = DEFAULT_TEMPLATE): HeaderData {

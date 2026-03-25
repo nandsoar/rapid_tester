@@ -1,8 +1,9 @@
-import { useRef, useState, useEffect, memo, useCallback } from "react"
+import { useRef, useState, useEffect, memo, useCallback, useMemo } from "react"
 import { nanoid } from "nanoid"
-import { ChevronDown, Trash2, ImagePlus, X, Image, Loader2 } from "lucide-react"
+import { ChevronDown, Trash2, ImagePlus, X, Image, Loader2, AlertTriangle, ArrowLeftRight, Wrench } from "lucide-react"
 import type { EditorView } from "@codemirror/view"
-import type { ScenarioData, ScenarioImage, ScenarioStatus } from "../types"
+import type { ScenarioData, ScenarioImage, ScenarioStatus, MatrixParameter } from "../types"
+import { computePerfStats, formatStat } from "../types"
 import { uploadAttachment, isAdoConfigured } from "../ado"
 import { compressImage, saveImageData, loadImageDataBatch, deleteImageData } from "../imageStore"
 import MarkdownInput from "./MarkdownInput"
@@ -12,8 +13,12 @@ interface Props {
   index: number
   scenario: ScenarioData
   sectionId: string
+  isPerformance?: boolean
+  parameters?: MatrixParameter[]
+  siblings?: ScenarioData[]
   onScenarioChange: (sectionId: string, scenario: ScenarioData) => void
   onScenarioDelete: (sectionId: string, scenarioId: string) => void
+  onSwapScenarios?: (sectionId: string, idA: string, idB: string) => void
 }
 
 const STATUS_OPTIONS: { value: ScenarioStatus; label: string }[] = [
@@ -28,8 +33,12 @@ export default memo(function ScenarioControl({
   index,
   scenario,
   sectionId,
+  isPerformance,
+  parameters,
+  siblings,
   onScenarioChange,
   onScenarioDelete,
+  onSwapScenarios,
 }: Props) {
   const onChange = useCallback(
     (updated: ScenarioData) => onScenarioChange(sectionId, updated),
@@ -282,6 +291,56 @@ export default memo(function ScenarioControl({
   const sectionRef = useRef<HTMLElement>(null)
   const activeFieldRef = useRef<string | null>(null)
   const insertInputRef = useRef<HTMLInputElement>(null)
+  const [showSwap, setShowSwap] = useState(false)
+  const [editingParam, setEditingParam] = useState<string | null>(null)
+
+  // Detect stale combo: keys/values don't match current parameter definitions
+  const isStale = useMemo(() => {
+    if (!parameters || parameters.length === 0) return false
+    const validParams = parameters.filter(p => p.name.trim())
+    const comboKeys = Object.keys(scenario.matrixCombo)
+    const paramNames = validParams.map(p => p.name)
+    // Check keys match
+    if (comboKeys.length !== paramNames.length) return true
+    for (const key of comboKeys) {
+      if (!paramNames.includes(key)) return true
+    }
+    // Check values are valid
+    for (const param of validParams) {
+      const val = scenario.matrixCombo[param.name]
+      if (val && val !== "N/A" && !param.values.includes(val)) return true
+    }
+    return false
+  }, [parameters, scenario.matrixCombo])
+
+  // Compute missing + orphaned params
+  const validParams = useMemo(() => (parameters ?? []).filter(p => p.name.trim()), [parameters])
+  const missingParams = useMemo(() => validParams.filter(p => !(p.name in scenario.matrixCombo)), [validParams, scenario.matrixCombo])
+  const orphanedKeys = useMemo(() => {
+    const paramNames = validParams.map(p => p.name)
+    return Object.keys(scenario.matrixCombo).filter(k => !paramNames.includes(k))
+  }, [validParams, scenario.matrixCombo])
+
+  function updateComboValue(paramName: string, value: string) {
+    onChange({ ...scenario, matrixCombo: { ...scenario.matrixCombo, [paramName]: value } })
+    setEditingParam(null)
+  }
+
+  function removeComboKey(key: string) {
+    const combo = { ...scenario.matrixCombo }
+    delete combo[key]
+    onChange({ ...scenario, matrixCombo: combo })
+  }
+
+  function autoFixCombo() {
+    const combo: Record<string, string> = {}
+    for (const p of validParams) {
+      combo[p.name] = scenario.matrixCombo[p.name] && p.values.includes(scenario.matrixCombo[p.name])
+        ? scenario.matrixCombo[p.name]
+        : p.values[0] || ""
+    }
+    onChange({ ...scenario, matrixCombo: combo })
+  }
 
   // Track which CodeMirror field is focused
   function trackFocus(fieldKey: string) {
@@ -332,6 +391,17 @@ export default memo(function ScenarioControl({
         </button>
       </div>
 
+      {scenario.status === "blocked" && (
+        <div className={styles.blockedField}>
+          <AlertTriangle size={13} />
+          <input
+            value={scenario.blockedReason || ""}
+            onChange={e => onChange({ ...scenario, blockedReason: e.target.value })}
+            placeholder="Blocked reason..."
+          />
+        </div>
+      )}
+
       <div className={styles.topRow}>
         <div className={`${styles.statusBadge} ${styles[scenario.status]}`}>
           <select
@@ -352,13 +422,105 @@ export default memo(function ScenarioControl({
           <ChevronDown size={12} />
         </div>
 
-        {Object.keys(scenario.matrixCombo).length > 0 && (
+        {(Object.keys(scenario.matrixCombo).length > 0 || missingParams.length > 0) && (
           <div className={styles.comboTags}>
-            {Object.entries(scenario.matrixCombo).map(([param, val]) => (
-              <span key={param} className={styles.tag}>
-                <span className={styles.tagParam}>{param}:</span> {val}
+            {Object.entries(scenario.matrixCombo).map(([param, val]) => {
+              const isOrphaned = orphanedKeys.includes(param)
+              const paramDef = validParams.find(p => p.name === param)
+              const isInvalidValue = paramDef && val && val !== "N/A" && !paramDef.values.includes(val)
+              const isNA = val === "N/A"
+              return (
+                <span key={param} className={`${styles.tag} ${isOrphaned ? styles.tagOrphaned : ""} ${isInvalidValue ? styles.tagInvalid : ""} ${isNA ? styles.tagNA : ""}`}>
+                  <span className={styles.tagParam}>{param}:</span>
+                  {isOrphaned ? (
+                    <>
+                      {val}
+                      <button className={styles.tagRemove} onClick={() => removeComboKey(param)} title="Remove orphaned parameter">
+                        <X size={10} />
+                      </button>
+                    </>
+                  ) : isNA ? (
+                    <span className={styles.tagValueNA}>N/A</span>
+                  ) : paramDef ? (
+                    <span className={styles.tagValueWrap}>
+                      <button className={styles.tagValue} onClick={() => setEditingParam(editingParam === param ? null : param)}>
+                        {val || "—"}
+                        <ChevronDown size={10} />
+                      </button>
+                      {editingParam === param && (
+                        <div className={styles.tagDropdown}>
+                          {paramDef.values.filter(v => v.trim()).map(v => (
+                            <button key={v} className={`${styles.tagOption} ${v === val ? styles.tagOptionActive : ""}`} onClick={() => updateComboValue(param, v)}>
+                              {v}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </span>
+                  ) : (
+                    <> {val}</>
+                  )}
+                </span>
+              )
+            })}
+            {missingParams.map(p => (
+              <span key={p.name} className={`${styles.tag} ${styles.tagMissing}`}>
+                <span className={styles.tagParam}>{p.name}:</span>
+                <span className={styles.tagValueWrap}>
+                  <button className={styles.tagValue} onClick={() => setEditingParam(editingParam === p.name ? null : p.name)}>
+                    —
+                    <ChevronDown size={10} />
+                  </button>
+                  {editingParam === p.name && (
+                    <div className={styles.tagDropdown}>
+                      {p.values.filter(v => v.trim()).map(v => (
+                        <button key={v} className={styles.tagOption} onClick={() => updateComboValue(p.name, v)}>
+                          {v}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </span>
               </span>
             ))}
+            {isStale && (
+              <span className={styles.staleBadge} title="Combo parameters are out of date with matrix definition">
+                <AlertTriangle size={12} />
+                Stale
+                <button className={styles.autoFixBtn} onClick={autoFixCombo} title="Auto-fix: set missing params to first value, remove orphans">
+                  <Wrench size={11} />
+                  Fix
+                </button>
+              </span>
+            )}
+          </div>
+        )}
+
+        {siblings && siblings.length > 1 && onSwapScenarios && (
+          <div className={styles.swapWrap}>
+            <button
+              className={styles.swapBtn}
+              onClick={() => setShowSwap(s => !s)}
+              title="Swap content with another scenario"
+            >
+              <ArrowLeftRight size={14} />
+            </button>
+            {showSwap && (
+              <div className={styles.swapDropdown}>
+                {siblings.filter(s => s.id !== scenario.id).map((s, si) => {
+                  const label = s.title || Object.values(s.matrixCombo).join(" / ") || `Scenario ${si + 1}`
+                  return (
+                    <button
+                      key={s.id}
+                      className={styles.swapItem}
+                      onClick={() => { onSwapScenarios(sectionId, scenario.id, s.id); setShowSwap(false) }}
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -411,6 +573,62 @@ export default memo(function ScenarioControl({
               />
             </div>
           ))}
+        </div>
+      )}
+
+      {!isNA && isPerformance && (
+        <div className={styles.perfTrials}>
+          <label className={styles.perfLabel}>Performance Trials</label>
+          <div className={styles.perfTableWrap}>
+            <table className={styles.perfTable}>
+              <thead>
+                <tr>
+                  {Array.from({ length: 10 }, (_, i) => (
+                    <th key={i}>T{i + 1}</th>
+                  ))}
+                  <th className={styles.statCol}>Avg</th>
+                  <th className={styles.statCol}>P50</th>
+                  <th className={styles.statCol}>P95</th>
+                  <th className={styles.statCol}>P99</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  {Array.from({ length: 10 }, (_, i) => {
+                    const trials = scenario.perfTrials ?? []
+                    const val = trials[i]
+                    return (
+                      <td key={i}>
+                        <input
+                          type="number"
+                          step="any"
+                          className={styles.perfInput}
+                          value={val !== null && val !== undefined ? val : ""}
+                          onChange={e => {
+                            const next = [...(scenario.perfTrials ?? new Array(10).fill(null))]
+                            next[i] = e.target.value === "" ? null : parseFloat(e.target.value)
+                            onChange({ ...scenario, perfTrials: next })
+                          }}
+                          placeholder="—"
+                        />
+                      </td>
+                    )
+                  })}
+                  {(() => {
+                    const stats = computePerfStats(scenario.perfTrials)
+                    return (
+                      <>
+                        <td className={styles.statCol}>{formatStat(stats.avg)}</td>
+                        <td className={styles.statCol}>{formatStat(stats.p50)}</td>
+                        <td className={styles.statCol}>{formatStat(stats.p95)}</td>
+                        <td className={styles.statCol}>{formatStat(stats.p99)}</td>
+                      </>
+                    )
+                  })()}
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 

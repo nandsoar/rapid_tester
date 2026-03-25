@@ -1,14 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import { nanoid } from "nanoid"
-import { ArrowLeft, Plus, Eye, Pencil, Upload, History, Check, X, FileText } from "lucide-react"
+import { ArrowLeft, Plus, Eye, Pencil, Upload, History, Check, X, Download } from "lucide-react"
 import { loadDocument, saveDocument } from "../storage"
 import type { TestDocument, HeaderData, MatrixSection, ScenarioData } from "../types"
 import HeaderControl from "./HeaderControl"
 import NotesControl from "./NotesControl"
 import MatrixControl from "./MatrixControl"
 import ScenarioControl from "./ScenarioControl"
-import { generateHtml, generateMarkdown } from "../markdown"
+import { generateHtml } from "../markdown"
+import { generateXlsx } from "../generateXlsx"
 import WorkItemPanel from "./WorkItemDrawer"
 import DiscussionPanel from "./DiscussionPanel"
 import { uploadAttachment, pushTestCases, fetchTestCasesField, fetchWorkItem, downloadAttachment, deleteIteration } from "../ado"
@@ -22,7 +23,6 @@ export default function Editor() {
   const navigate = useNavigate()
   const [doc, setDoc] = useState<TestDocument | null>(null)
   const [showPreview, setShowPreview] = useState(false)
-  const [showMarkdown, setShowMarkdown] = useState(false)
   const [pushing, setPushing] = useState(false)
   const [pushMsg, setPushMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null)
   const [iterations, setIterations] = useState<TestIteration[]>([])
@@ -35,7 +35,6 @@ export default function Editor() {
   const [localImageData, setLocalImageData] = useState(new Map<string, string>())
 
   const [previewHtml, setPreviewHtml] = useState("")
-  const [markdownSource, setMarkdownSource] = useState("")
 
   const lastFocused = useRef<Element | null>(null)
 
@@ -68,13 +67,6 @@ export default function Editor() {
       setPreviewHtml(html)
     }
   }, [showPreview])
-
-  // Generate markdown source when toggling into markdown view
-  useEffect(() => {
-    if (showMarkdown && doc) {
-      setMarkdownSource(generateMarkdown(doc, undefined, "none"))
-    }
-  }, [showMarkdown])
 
   const activeIterRef = useRef(activeIteration)
   activeIterRef.current = activeIteration
@@ -323,6 +315,8 @@ export default function Editor() {
     const section: MatrixSection = {
       id: nanoid(),
       title: "",
+      description: "",
+      isPerformance: false,
       parameters: [],
       scenarios: [],
     }
@@ -360,6 +354,7 @@ export default function Editor() {
         setup: "",
         steps: "",
         images: [],
+        perfTrials: [],
       })),
     }))
 
@@ -415,6 +410,29 @@ export default function Editor() {
         s.id === sectionId
           ? { ...section, scenarios: section.scenarios.filter(sc => sc.id !== scenarioId) }
           : s
+      ),
+    })
+    markDirty()
+  }, [persist])
+
+  const handleSwapScenarios = useCallback((sectionId: string, idA: string, idB: string) => {
+    const d = latestDoc.current
+    if (!d) return
+    const section = d.matrixSections.find(s => s.id === sectionId)
+    if (!section) return
+    const a = section.scenarios.find(s => s.id === idA)
+    const b = section.scenarios.find(s => s.id === idB)
+    if (!a || !b) return
+    // Swap content fields, keep id and matrixCombo in place
+    const swapped = section.scenarios.map(s => {
+      if (s.id === idA) return { ...s, status: b.status, title: b.title, description: b.description, expected: b.expected, setup: b.setup, steps: b.steps, images: b.images, perfTrials: b.perfTrials }
+      if (s.id === idB) return { ...s, status: a.status, title: a.title, description: a.description, expected: a.expected, setup: a.setup, steps: a.steps, images: a.images, perfTrials: a.perfTrials }
+      return s
+    })
+    persist({
+      ...d,
+      matrixSections: d.matrixSections.map(s =>
+        s.id === sectionId ? { ...section, scenarios: swapped } : s
       ),
     })
     markDirty()
@@ -503,17 +521,18 @@ export default function Editor() {
         <div className={styles.actions}>
           <button
             className={styles.toolbarBtn}
-            onClick={() => { setShowMarkdown(false); togglePreview() }}
+            onClick={() => { togglePreview() }}
           >
             {showPreview ? <Pencil size={16} /> : <Eye size={16} />}
             {showPreview ? "Edit" : "Preview"}
           </button>
           <button
             className={styles.toolbarBtn}
-            onClick={() => { if (showPreview) togglePreview(); setShowMarkdown(m => !m) }}
+            onClick={() => generateXlsx(doc)}
+            title="Download XLSX workbook"
           >
-            <FileText size={16} />
-            {showMarkdown ? "Edit" : "Markdown"}
+            <Download size={16} />
+            XLSX
           </button>
           {hasWorkItem && doc.adoWorkItemId && (
             <button
@@ -606,10 +625,7 @@ export default function Editor() {
               dangerouslySetInnerHTML={{ __html: previewHtml }}
             />
           </div>
-          <div className={styles.scrollPane} style={{ display: showMarkdown ? undefined : "none" }}>
-            <pre className={styles.markdownSource}>{markdownSource}</pre>
-          </div>
-          <div className={styles.scrollPane} style={{ display: showPreview || showMarkdown ? "none" : undefined }}>
+          <div className={styles.scrollPane} style={{ display: showPreview ? "none" : undefined }}>
             <div className={styles.controls}>
               <HeaderControl
                 data={doc.header}
@@ -636,8 +652,12 @@ export default function Editor() {
                       index={si}
                       scenario={scenario}
                       sectionId={section.id}
+                      isPerformance={section.isPerformance}
+                      parameters={section.parameters}
+                      siblings={section.scenarios}
                       onScenarioChange={handleScenarioChange}
                       onScenarioDelete={handleScenarioDelete}
+                      onSwapScenarios={handleSwapScenarios}
                     />
                   ))}
                 </div>
