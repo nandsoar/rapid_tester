@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs"
 import { saveAs } from "file-saver"
+import { computePerfStats } from "./types"
 import type { TestDocument } from "./types"
 
 const TRIALS = 10
@@ -11,17 +12,12 @@ const DESC_BG = "FFE8F0E8"
 const DESC_FG = "FF333333"
 const HEADER_BG = "FF2D6B4F"
 const HEADER_FG = "FFFFFFFF"
-
-function colLetter(col: number): string {
-  let s = ""
-  let n = col
-  while (n > 0) {
-    const rem = (n - 1) % 26
-    s = String.fromCharCode(65 + rem) + s
-    n = Math.floor((n - 1) / 26)
-  }
-  return s
-}
+const SCENARIO_BG = "FF1B5E50"
+const HEADER_TRIAL_BG = "FF2B5D6B"
+const HEADER_STAT_BG = "FF2E4A62"
+const DATA_PARAM_BG = "FFF3F8F3"
+const DATA_TRIAL_BG = "FFF0F5F9"
+const DATA_STAT_BG = "FFEDF1F7"
 
 function fillRow(ws: ExcelJS.Worksheet, row: number, cols: number, fill: ExcelJS.Fill) {
   for (let c = 1; c <= cols; c++) {
@@ -34,32 +30,24 @@ export async function generateXlsx(doc: TestDocument) {
 
   for (const section of doc.matrixSections) {
     const paramNames = section.parameters.map(p => p.name).filter(n => n)
-    const nParams = paramNames.length
     const scenarios = section.scenarios
 
-    // Build header columns: # | [params...] | Status | Trial 1..N | Mean | P50 | P95 | P99
-    const fixedBefore = nParams + 2 // # + params + Status
-    const trialStartCol = fixedBefore + 1
-    const trialEndCol = trialStartCol + TRIALS - 1
-    const meanCol = trialEndCol + 1
-    const p50Col = meanCol + 1
-    const p95Col = p50Col + 1
-    const p99Col = p95Col + 1
-    const totalCols = p99Col
+    // Trial columns: T1..T10 | Mean | P50 | P95 | P99
+    const trialCols = TRIALS + 4
+    const totalCols = Math.max(paramNames.length, trialCols)
 
-    const headers: string[] = ["#"]
-    for (const p of paramNames) headers.push(p)
-    headers.push("Status")
-    for (let t = 1; t <= TRIALS; t++) headers.push(`Trial ${t}`)
-    headers.push("Mean", "P50", "P95", "P99")
-
-    // Sheet name: use matrix section title, max 31 chars, strip invalid chars
     const sheetTitle = (section.title || "Sheet").replace(/[\\/*?[\]:]/g, "").slice(0, 31) || "Sheet"
     const ws = wb.addWorksheet(sheetTitle)
 
     const titleFill: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: TITLE_BG } }
     const descFill: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: DESC_BG } }
-    const headerFill: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } }
+    const scenarioFill: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: SCENARIO_BG } }
+    const paramLabelFill: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_BG } }
+    const paramDataFill: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: DATA_PARAM_BG } }
+    const trialHeaderFill: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_TRIAL_BG } }
+    const trialDataFill: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: DATA_TRIAL_BG } }
+    const statHeaderFill: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_STAT_BG } }
+    const statDataFill: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: DATA_STAT_BG } }
 
     // Row 1: Section title
     ws.mergeCells(1, 1, 1, totalCols)
@@ -71,84 +59,106 @@ export async function generateXlsx(doc: TestDocument) {
     ws.getRow(1).height = 28
     fillRow(ws, 1, totalCols, titleFill)
 
-    // Row 2: Description from section
-    const descText = section.description || ""
+    // Row 2: Description
     ws.mergeCells(2, 1, 2, totalCols)
     const descCell = ws.getCell(2, 1)
-    descCell.value = descText
+    descCell.value = section.description || ""
     descCell.font = { italic: true, color: { argb: DESC_FG }, size: 10 }
     descCell.fill = descFill
     descCell.alignment = { horizontal: "center", vertical: "middle", wrapText: true }
     ws.getRow(2).height = 22
     fillRow(ws, 2, totalCols, descFill)
 
-    // Row 3: Column headers
-    for (let i = 0; i < headers.length; i++) {
-      const cell = ws.getCell(3, i + 1)
-      cell.value = headers[i]
-      cell.font = { bold: true, color: { argb: HEADER_FG }, size: 10 }
-      cell.fill = headerFill
-      cell.alignment = { horizontal: "center", wrapText: true }
-    }
+    let row = 3
 
-    // Data rows (row 4+)
     for (let tcIdx = 0; tcIdx < scenarios.length; tcIdx++) {
       const scenario = scenarios[tcIdx]
-      const r = tcIdx + 4
+      const font: Partial<ExcelJS.Font> = { size: 10 }
 
-      // #
-      ws.getCell(r, 1).value = tcIdx + 1
-      ws.getCell(r, 1).font = { size: 10 }
+      // -- Blank separator row between scenarios --
+      if (tcIdx > 0) row++
 
-      // Parameter values (if any)
-      for (let pIdx = 0; pIdx < nParams; pIdx++) {
-        const cell = ws.getCell(r, 2 + pIdx)
-        cell.value = scenario.matrixCombo[paramNames[pIdx]] ?? ""
-        cell.font = { size: 10 }
+      // -- Scenario label row (merged across all cols) --
+      ws.mergeCells(row, 1, row, totalCols)
+      const labelCell = ws.getCell(row, 1)
+      labelCell.value = `Test Case ${tcIdx + 1}`
+      labelCell.font = { bold: true, color: { argb: HEADER_FG }, size: 11 }
+      labelCell.fill = scenarioFill
+      labelCell.alignment = { horizontal: "left", vertical: "middle" }
+      fillRow(ws, row, totalCols, scenarioFill)
+      row++
+
+      // -- Parameter header row --
+      for (let pIdx = 0; pIdx < paramNames.length; pIdx++) {
+        const cell = ws.getCell(row, pIdx + 1)
+        cell.value = paramNames[pIdx]
+        cell.font = { bold: true, size: 10, color: { argb: HEADER_FG } }
+        cell.fill = paramLabelFill
+        cell.alignment = { horizontal: "center" }
       }
+      row++
 
-      // Status
-      const statusCell = ws.getCell(r, nParams + 2)
-      statusCell.value = scenario.status === "not-run" ? "TODO" : scenario.status.toUpperCase()
-      statusCell.font = { size: 10 }
+      // -- Parameter value row --
+      for (let pIdx = 0; pIdx < paramNames.length; pIdx++) {
+        const cell = ws.getCell(row, pIdx + 1)
+        cell.value = scenario.matrixCombo[paramNames[pIdx]] ?? ""
+        cell.font = font
+        cell.fill = paramDataFill
+        cell.alignment = { horizontal: "center" }
+      }
+      row++
 
-      // Pre-fill trial columns from perfTrials data if available
+      // -- Trial header row --
+      const trialHeaders = []
+      for (let t = 1; t <= TRIALS; t++) trialHeaders.push(`T${t}`)
+      trialHeaders.push("Mean", "P50", "P95", "P99")
+
+      for (let i = 0; i < trialHeaders.length; i++) {
+        const cell = ws.getCell(row, i + 1)
+        cell.value = trialHeaders[i]
+        cell.font = { bold: true, color: { argb: HEADER_FG }, size: 10 }
+        cell.alignment = { horizontal: "center" }
+        cell.fill = i >= TRIALS ? statHeaderFill : trialHeaderFill
+      }
+      row++
+
+      // -- Trial data row --
       const trials = scenario.perfTrials ?? []
       for (let t = 0; t < TRIALS; t++) {
         const val = trials[t]
+        const cell = ws.getCell(row, t + 1)
+        cell.fill = trialDataFill
+        cell.alignment = { horizontal: "center" }
         if (val !== null && val !== undefined && !isNaN(val)) {
-          ws.getCell(r, trialStartCol + t).value = val
-          ws.getCell(r, trialStartCol + t).font = { size: 10 }
+          cell.value = val
+          cell.font = font
         }
       }
 
-      // Stats formulas
-      const sL = colLetter(trialStartCol)
-      const eL = colLetter(trialEndCol)
-      const range = `${sL}${r}:${eL}${r}`
-
-      const setFormula = (col: number, formula: string) => {
-        const cell = ws.getCell(r, col)
-        cell.value = { formula } as ExcelJS.CellFormulaValue
+      // Stats
+      const stats = computePerfStats(scenario.perfTrials)
+      const statEntries: [number, number | null][] = [
+        [TRIALS + 1, stats.avg],
+        [TRIALS + 2, stats.p50],
+        [TRIALS + 3, stats.p95],
+        [TRIALS + 4, stats.p99],
+      ]
+      for (const [col, val] of statEntries) {
+        const cell = ws.getCell(row, col)
+        if (val !== null) cell.value = Math.round(val * 100) / 100
         cell.font = { bold: true, size: 10 }
+        cell.fill = statDataFill
+        cell.alignment = { horizontal: "center" }
       }
-
-      setFormula(meanCol, `IF(COUNTA(${range})>0,AVERAGE(${range}),"")`)
-      setFormula(p50Col, `IF(COUNTA(${range})>0,PERCENTILE(${range},0.5),"")`)
-      setFormula(p95Col, `IF(COUNTA(${range})>0,PERCENTILE(${range},0.95),"")`)
-      setFormula(p99Col, `IF(COUNTA(${range})>0,PERCENTILE(${range},0.99),"")`)
+      row++
     }
 
     // Column widths
-    ws.getColumn(1).width = 5
-    for (let pIdx = 0; pIdx < nParams; pIdx++) {
-      ws.getColumn(2 + pIdx).width = 14
+    ws.getColumn(1).width = 14
+    for (let t = 2; t <= TRIALS; t++) {
+      ws.getColumn(t).width = 8
     }
-    ws.getColumn(nParams + 2).width = 10
-    for (let t = 0; t < TRIALS; t++) {
-      ws.getColumn(trialStartCol + t).width = 10
-    }
-    for (const c of [meanCol, p50Col, p95Col, p99Col]) {
+    for (let c = TRIALS + 1; c <= TRIALS + 4; c++) {
       ws.getColumn(c).width = 10
     }
   }
