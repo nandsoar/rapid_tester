@@ -1,8 +1,12 @@
-import { useState } from "react"
+import { useState, useRef, useEffect } from "react"
 import { nanoid } from "nanoid"
-import { Plus, Trash2, X, Grid3X3, Check, Timer, Filter } from "lucide-react"
-import type { MatrixSection, MatrixParameter, ScenarioData } from "../types"
+import { Plus, Trash2, X, Grid3X3, Check, Timer, Filter, ImagePlus, Loader2 } from "lucide-react"
+import { EditorView } from "@codemirror/view"
+import type { MatrixSection, MatrixParameter, ScenarioData, ScenarioImage } from "../types"
 import { computePerfStats, formatStat } from "../types"
+import { uploadAttachment, isAdoConfigured } from "../ado"
+import { compressImage, saveImageData, loadImageDataBatch, deleteImageData } from "../imageStore"
+import MarkdownInput from "./MarkdownInput"
 import styles from "./MatrixControl.module.scss"
 
 interface Props {
@@ -19,6 +23,232 @@ export default function MatrixControl({
   onDelete,
 }: Props) {
   const [showPicker, setShowPicker] = useState(false)
+  const editorViews = useRef<Record<string, EditorView | null>>({})
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [uploading, setUploading] = useState<Set<string>>(new Set())
+  const [imgDataCache, setImgDataCache] = useState<Map<string, string>>(new Map())
+
+  // Keep refs for async closures
+  const sectionRef = useRef(section)
+  sectionRef.current = section
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+
+  // Load image data from IndexedDB for thumbnails
+  useEffect(() => {
+    const ids = (section.images ?? [])
+      .filter(img => !img.data && !imgDataCache.has(img.id))
+      .map(img => img.id)
+    if (ids.length === 0) return
+    loadImageDataBatch(ids).then(loaded => {
+      if (loaded.size > 0) {
+        setImgDataCache(prev => {
+          const next = new Map(prev)
+          loaded.forEach((v, k) => next.set(k, v))
+          return next
+        })
+      }
+    })
+  }, [section.images])
+  function trackView(fieldKey: string) {
+    return (view: EditorView | null) => {
+      editorViews.current[fieldKey] = view
+    }
+  }
+
+  function tryUploadToAdo(img: ScenarioImage, data: string) {
+    if (!isAdoConfigured()) return
+    setUploading(prev => new Set(prev).add(img.id))
+    uploadAttachment(img.name, data)
+      .then(adoUrl => {
+        const latest = sectionRef.current
+        onChangeRef.current({
+          ...latest,
+          images: (latest.images ?? []).map(i =>
+            i.id === img.id ? { ...i, adoUrl } : i
+          ),
+        })
+      })
+      .catch(() => { /* stays local-only */ })
+      .finally(() => {
+        setUploading(prev => {
+          const next = new Set(prev)
+          next.delete(img.id)
+          return next
+        })
+      })
+  }
+
+  function findImageRefAtCursor(view: EditorView): { from: number; to: number } | null {
+    const pos = view.state.selection.main.from
+    const doc = view.state.doc.toString()
+    const imgRefRegex = /!\[[^\]]*\]\(img:[a-zA-Z0-9_-]+\)/g
+    let m
+    while ((m = imgRefRegex.exec(doc)) !== null) {
+      if (pos >= m.index && pos <= m.index + m[0].length) {
+        return { from: m.index, to: m.index + m[0].length }
+      }
+    }
+    return null
+  }
+
+  function insertImageRef(fieldKey: string, img: ScenarioImage) {
+    const view = editorViews.current[fieldKey]
+    const ref = `![${img.name}](img:${img.id})`
+    if (view) {
+      const existing = findImageRefAtCursor(view)
+      if (existing) {
+        view.dispatch({
+          changes: { from: existing.from, to: existing.to, insert: ref },
+          selection: { anchor: existing.from + ref.length },
+        })
+        view.focus()
+        return
+      }
+      const { from, to } = view.state.selection.main
+      const doc = view.state.doc.toString()
+      const before = doc.slice(0, from)
+      const lineStart = before.lastIndexOf("\n") + 1
+      const linePrefix = before.slice(lineStart)
+      const trimmed = linePrefix.replace(/ +$/, "")
+      const spaceCount = linePrefix.length - trimmed.length
+      const deleteFrom = from - spaceCount
+      const insert = (trimmed.length > 0 ? " " : "") + ref
+      view.dispatch({
+        changes: { from: deleteFrom, to, insert },
+        selection: { anchor: deleteFrom + insert.length },
+      })
+      view.focus()
+    } else {
+      const current = (section as unknown as Record<string, unknown>)[fieldKey] as string ?? ""
+      onChange({ ...section, [fieldKey]: current + (current ? " " : "") + ref })
+    }
+  }
+
+  function addImages(files: FileList) {
+    Array.from(files).forEach(file => {
+      if (!file.type.startsWith("image/")) return
+      const reader = new FileReader()
+      reader.onload = async () => {
+        const raw = reader.result as string
+        const compressed = await compressImage(raw)
+        const imgId = nanoid()
+        await saveImageData(imgId, compressed)
+        setImgDataCache(prev => new Map(prev).set(imgId, compressed))
+        const img: ScenarioImage = {
+          id: imgId,
+          data: "",
+          name: file.name || `screenshot-${Date.now()}.png`,
+        }
+        onChangeRef.current({ ...sectionRef.current, images: [...(sectionRef.current.images ?? []), img] })
+        tryUploadToAdo(img, compressed)
+      }
+      reader.readAsDataURL(file)
+    })
+  }
+
+  function addImageAndInsert(file: File, fieldKey: string) {
+    if (!file.type.startsWith("image/")) return
+    const view = editorViews.current[fieldKey]
+    const cursorPos = view ? view.state.selection.main.from : -1
+    const reader = new FileReader()
+    reader.onload = async () => {
+      const raw = reader.result as string
+      const compressed = await compressImage(raw)
+      const imgId = nanoid()
+      const imgName = file.name || `screenshot-${Date.now()}.png`
+      await saveImageData(imgId, compressed)
+      setImgDataCache(prev => new Map(prev).set(imgId, compressed))
+      const img: ScenarioImage = { id: imgId, data: "", name: imgName }
+      const ref = `![${imgName}](img:${img.id})`
+      const current = (sectionRef.current as unknown as Record<string, unknown>)[fieldKey] as string ?? ""
+      let newVal: string
+      if (cursorPos >= 0 && cursorPos <= current.length) {
+        const before = current.slice(0, cursorPos)
+        const lineStart = before.lastIndexOf("\n") + 1
+        const linePrefix = before.slice(lineStart)
+        const trimmed = linePrefix.replace(/ +$/, "")
+        const spaceCount = linePrefix.length - trimmed.length
+        const adjustedPos = cursorPos - spaceCount
+        const prefix = trimmed.length > 0 ? " " : ""
+        newVal = current.slice(0, adjustedPos) + prefix + ref + current.slice(cursorPos)
+      } else {
+        newVal = current + (current ? " " : "") + ref
+      }
+      onChangeRef.current({
+        ...sectionRef.current,
+        [fieldKey]: newVal,
+        images: [...(sectionRef.current.images ?? []), img],
+      })
+      tryUploadToAdo(img, compressed)
+    }
+    reader.readAsDataURL(file)
+  }
+
+  function removeImage(imgId: string) {
+    deleteImageData(imgId)
+    onChange({
+      ...section,
+      images: (section.images ?? []).filter(i => i.id !== imgId),
+    })
+  }
+
+  function handleFieldPaste(fieldKey: string) {
+    return (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items
+      if (!items) return
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile()
+          if (file) {
+            e.preventDefault()
+            addImageAndInsert(file, fieldKey)
+            return
+          }
+        }
+      }
+    }
+  }
+
+  function handleFieldDrop(fieldKey: string) {
+    return (e: DragEvent) => {
+      const files = e.dataTransfer?.files
+      if (!files) return
+      for (const file of files) {
+        if (file.type.startsWith("image/")) {
+          e.preventDefault()
+          addImageAndInsert(file, fieldKey)
+          return
+        }
+      }
+    }
+  }
+
+  function handleRepoPaste(e: React.ClipboardEvent) {
+    const items = e.clipboardData.items
+    const imageFiles: File[] = []
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile()
+        if (file) imageFiles.push(file)
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault()
+      const dt = new DataTransfer()
+      imageFiles.forEach(f => dt.items.add(f))
+      addImages(dt.files)
+    }
+  }
+
+  function handleRepoDrop(e: React.DragEvent) {
+    e.preventDefault()
+    if (e.dataTransfer.files.length) {
+      addImages(e.dataTransfer.files)
+    }
+  }
 
   function addParameter() {
     const param: MatrixParameter = { id: nanoid(), name: "", values: [""] }
@@ -188,7 +418,7 @@ export default function MatrixControl({
           className={styles.sectionTitle}
           value={section.title}
           onChange={e => onChange({ ...section, title: e.target.value })}
-          placeholder={`Matrix ${index + 1} — Title...`}
+          placeholder={`Scenario Matrix ${index + 1}...`}
         />
         <button
           className={`${styles.perfToggle} ${section.isPerformance ? styles.perfActive : ""}`}
@@ -406,6 +636,98 @@ export default function MatrixControl({
           )}
         </div>
       )}
+
+      <MarkdownInput
+        value={section.prerequisites ?? ""}
+        onChange={v => onChange({ ...section, prerequisites: v })}
+        placeholder="Prerequisites..."
+        onPaste={handleFieldPaste("prerequisites")}
+        onDrop={handleFieldDrop("prerequisites")}
+        editorViewRef={trackView("prerequisites")}
+      />
+
+      <MarkdownInput
+        value={section.steps ?? ""}
+        onChange={v => onChange({ ...section, steps: v })}
+        placeholder="General steps..."
+        onPaste={handleFieldPaste("steps")}
+        onDrop={handleFieldDrop("steps")}
+        editorViewRef={trackView("steps")}
+      />
+
+      <MarkdownInput
+        value={section.expected ?? ""}
+        onChange={v => onChange({ ...section, expected: v })}
+        placeholder="Expected result..."
+        onPaste={handleFieldPaste("expected")}
+        onDrop={handleFieldDrop("expected")}
+        editorViewRef={trackView("expected")}
+      />
+
+      <div
+        className={styles.imagesSection}
+        tabIndex={0}
+        onPaste={handleRepoPaste}
+        onDrop={handleRepoDrop}
+        onDragOver={e => { e.preventDefault(); e.currentTarget.classList.add(styles.dragOver) }}
+        onDragLeave={e => e.currentTarget.classList.remove(styles.dragOver)}
+      >
+        <div className={styles.imagesHeader}>
+          <label>Attachments</label>
+          <button
+            className={styles.addImageBtn}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <ImagePlus size={14} />
+            Add Image
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={e => {
+              if (e.target.files) addImages(e.target.files)
+              e.target.value = ""
+            }}
+          />
+        </div>
+        {(section.images ?? []).length > 0 && (
+          <div className={styles.imageGrid}>
+            {(section.images ?? []).map(img => (
+              <div
+                key={img.id}
+                className={styles.imageThumb}
+                onClick={() => insertImageRef("steps", img)}
+                title={`Click to insert ${img.name}`}
+              >
+                <img src={img.data || imgDataCache.get(img.id) || img.adoUrl} alt={img.name} />
+                <button
+                  className={styles.imageRemove}
+                  onClick={(e) => { e.stopPropagation(); removeImage(img.id) }}
+                >
+                  <X size={12} />
+                </button>
+                {uploading.has(img.id) ? (
+                  <span className={styles.imageStatus}><Loader2 size={10} className={styles.spin} /> Uploading</span>
+                ) : img.adoUrl ? (
+                  <span className={`${styles.imageStatus} ${styles.synced}`}>✓ Synced</span>
+                ) : (
+                  <span className={`${styles.imageStatus} ${styles.localOnly}`}>Local only</span>
+                )}
+                <span className={styles.imageName}>{img.name}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {(section.images ?? []).length === 0 && (
+          <div className={styles.dropHint}>
+            <ImagePlus size={20} />
+            <span>Click here and press Ctrl+V to paste, or drag & drop images</span>
+          </div>
+        )}
+      </div>
     </section>
   )
 }

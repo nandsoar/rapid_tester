@@ -29,6 +29,7 @@ export async function generateXlsx(doc: TestDocument) {
   const wb = new ExcelJS.Workbook()
 
   for (const section of doc.matrixSections) {
+    if (!section.isPerformance) continue
     const paramNames = section.parameters.map(p => p.name).filter(n => n)
     const scenarios = section.scenarios
 

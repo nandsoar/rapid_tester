@@ -75,9 +75,13 @@ export interface MatrixSection {
   id: string
   title: string
   description: string
+  expected: string
+  prerequisites: string
+  steps: string
   isPerformance: boolean
   parameters: MatrixParameter[]
   scenarios: ScenarioData[]
+  images?: ScenarioImage[]
 }
 
 export interface TestDocument {

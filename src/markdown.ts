@@ -46,6 +46,25 @@ function statusLabel(status: string): string {
   }
 }
 
+function statusBadgeColor(status: string): string {
+  switch (status) {
+    case "pass":
+      return "#16a34a"
+    case "fail":
+      return "#dc2626"
+    case "blocked":
+      return "#9333ea"
+    default:
+      return "#6b7280"
+  }
+}
+
+export function statusBadge(status: string): string {
+  const label = statusLabel(status).toUpperCase()
+  const bg = statusBadgeColor(status)
+  return `<span style="display:inline-block;padding:1px 8px;border-radius:4px;font-size:11px;font-weight:700;color:#fff;background:${bg};margin-right:6px;vertical-align:middle">${label}</span>`
+}
+
 function esc(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -56,11 +75,24 @@ function esc(text: string): string {
 
 export type ImageResolveMode = "local" | "ado" | "none"
 
+export function deriveOverallStatus(doc: TestDocument): string {
+  const statuses = doc.matrixSections.flatMap(s =>
+    s.scenarios.filter(sc => sc.status !== "n-a").map(sc => sc.status)
+  )
+  if (statuses.length === 0) return "not-run"
+  if (statuses.includes("fail")) return "fail"
+  if (statuses.includes("blocked")) return "blocked"
+  if (statuses.every(s => s === "pass")) return "pass"
+  if (statuses.includes("not-run")) return "not-run"
+  return "not-run"
+}
+
 export function generateHtml(doc: TestDocument, template: TemplateConfig = DEFAULT_TEMPLATE, imageMode: ImageResolveMode = "local", imageDataMap?: Map<string, string>): string {
   const parts: string[] = []
 
   // Header — blockquote style
   const h = doc.header
+  const overall = deriveOverallStatus(doc)
   const headerLines: string[] = []
   for (const field of template.headerFields) {
     const val = h[field.key]
@@ -78,9 +110,39 @@ export function generateHtml(doc: TestDocument, template: TemplateConfig = DEFAU
     parts.push(mdToHtml(doc.notes))
   }
 
+  // Collect all blocked scenarios
+  const blockedItems: { section: string; index: number; title: string; reason: string }[] = []
+  for (const section of doc.matrixSections) {
+    for (let i = 0; i < section.scenarios.length; i++) {
+      const s = section.scenarios[i]
+      if (s.status === "blocked" && s.blockedReason?.trim()) {
+        blockedItems.push({
+          section: section.title || "Scenario Matrix",
+          index: i + 1,
+          title: s.title || "",
+          reason: s.blockedReason.trim(),
+        })
+      }
+    }
+  }
+  if (blockedItems.length > 0) {
+    parts.push(`<h2>Blocked</h2>`)
+    parts.push(`<ul>`)
+    for (const b of blockedItems) {
+      const label = b.title ? `Test Case ${b.index}: ${esc(b.title)}` : `Test Case ${b.index}`
+      parts.push(`<li><strong>${label}</strong> — ${esc(b.reason)}</li>`)
+    }
+    parts.push(`</ul>`)
+  }
+
+  parts.push(`<hr>`)
+
   // Build image map for resolving img: references
   const imageMap = new Map<string, { data: string; name: string; adoUrl?: string }>()
   for (const section of doc.matrixSections) {
+    for (const img of section.images ?? []) {
+      imageMap.set(img.id, { data: img.data, name: img.name, adoUrl: img.adoUrl })
+    }
     for (const s of section.scenarios) {
       for (const img of s.images ?? []) {
         imageMap.set(img.id, { data: img.data, name: img.name, adoUrl: img.adoUrl })
@@ -101,10 +163,23 @@ export function generateHtml(doc: TestDocument, template: TemplateConfig = DEFAU
 
   // Matrix sections
   for (const section of doc.matrixSections) {
-    parts.push(`<h2>${esc(section.title || "Test Matrix")}</h2>`)
+    parts.push(`<h2>${esc(section.title || "Scenario Matrix")}</h2>`)
 
     if (section.description?.trim()) {
       parts.push(`<p><em>${esc(section.description)}</em></p>`)
+    }
+
+    if (section.prerequisites?.trim()) {
+      parts.push(`<p><strong>Prerequisites:</strong></p>`)
+      parts.push(mdToHtml(resolveImages(section.prerequisites)))
+    }
+    if (section.steps?.trim()) {
+      parts.push(`<p><strong>General Steps:</strong></p>`)
+      parts.push(mdToHtml(resolveImages(section.steps)))
+    }
+    if (section.expected?.trim()) {
+      parts.push(`<p><strong>Expected:</strong></p>`)
+      parts.push(mdToHtml(resolveImages(section.expected)))
     }
 
     // Matrix summary table (only when multiple scenarios)
@@ -112,6 +187,7 @@ export function generateHtml(doc: TestDocument, template: TemplateConfig = DEFAU
       p => p.name.trim() && p.values.some(v => v.trim())
     )
     if (validParams.length > 0 && section.scenarios.length > 1) {
+      parts.push(`<h3>Scenario Overview</h3>`)
       const paramNames = validParams.map(p => p.name)
       const headers = section.isPerformance
         ? ["#", ...paramNames, "Expected", "Avg", "P50", "P95", "P99", "Result"]
@@ -119,7 +195,7 @@ export function generateHtml(doc: TestDocument, template: TemplateConfig = DEFAU
 
       const dataRows = section.scenarios.map((s, si) => {
         const vals = paramNames.map(name => esc(s.matrixCombo[name] || "—"))
-        const expected = esc(s.expected.trim() || "—")
+        const expected = esc(s.expected.trim() || section.expected?.trim() || "—")
         const result = `${statusEmoji(s.status)} ${statusLabel(s.status)}`
         if (section.isPerformance) {
           const stats = computePerfStats(s.perfTrials)
@@ -151,7 +227,7 @@ export function generateHtml(doc: TestDocument, template: TemplateConfig = DEFAU
         if (s.status === "n-a") continue
 
         const titleSuffix = s.title ? `: ${esc(s.title)}` : ""
-        parts.push(`<h4>${statusEmoji(s.status)} Test Case ${i + 1}${titleSuffix}</h4>`)
+        parts.push(`<h4>${statusBadge(s.status)} Test Case ${i + 1}${titleSuffix}</h4>`)
 
         // Combo inputs
         if (Object.keys(s.matrixCombo).length > 0) {
@@ -161,8 +237,6 @@ export function generateHtml(doc: TestDocument, template: TemplateConfig = DEFAU
             .join("  ")
           if (comboParts) parts.push(`<p>${comboParts}</p>`)
         }
-
-        parts.push(`<p><strong>Status:</strong> ${statusLabel(s.status)}</p>`)
 
         if (s.status === "blocked" && s.blockedReason?.trim()) {
           parts.push(`<p><strong>Blocked By:</strong> ${esc(s.blockedReason)}</p>`)
@@ -212,6 +286,7 @@ export function generateMarkdown(doc: TestDocument, template: TemplateConfig = D
   // No title — the work item title is used in ADO
 
   // Header — blockquote style
+  const overallMd = deriveOverallStatus(doc)
   const h = doc.header
   for (const field of template.headerFields) {
     const val = h[field.key]
@@ -229,13 +304,60 @@ export function generateMarkdown(doc: TestDocument, template: TemplateConfig = D
     lines.push("")
   }
 
+  // Collect all blocked scenarios
+  const blockedItemsMd: { section: string; index: number; title: string; reason: string }[] = []
+  for (const section of doc.matrixSections) {
+    for (let i = 0; i < section.scenarios.length; i++) {
+      const s = section.scenarios[i]
+      if (s.status === "blocked" && s.blockedReason?.trim()) {
+        blockedItemsMd.push({
+          section: section.title || "Scenario Matrix",
+          index: i + 1,
+          title: s.title || "",
+          reason: s.blockedReason.trim(),
+        })
+      }
+    }
+  }
+  if (blockedItemsMd.length > 0) {
+    lines.push("## Blocked")
+    lines.push("")
+    for (const b of blockedItemsMd) {
+      const label = b.title ? `Test Case ${b.index}: ${b.title}` : `Test Case ${b.index}`
+      lines.push(`- **${label}** — ${b.reason}`)
+    }
+    lines.push("")
+  }
+
+  lines.push("---")
+  lines.push("")
+
   // Matrix sections
   for (const section of doc.matrixSections) {
-    lines.push(`## ${section.title || "Test Matrix"}`)
+    lines.push(`## ${section.title || "Scenario Matrix"}`)
     lines.push("")
 
     if (section.description?.trim()) {
       lines.push(`_${section.description}_`)
+      lines.push("")
+    }
+
+    if (section.prerequisites?.trim()) {
+      lines.push("**Prerequisites:**")
+      lines.push("")
+      lines.push(section.prerequisites)
+      lines.push("")
+    }
+    if (section.steps?.trim()) {
+      lines.push("**General Steps:**")
+      lines.push("")
+      lines.push(section.steps)
+      lines.push("")
+    }
+    if (section.expected?.trim()) {
+      lines.push("**Expected:**")
+      lines.push("")
+      lines.push(section.expected)
       lines.push("")
     }
 
@@ -244,6 +366,8 @@ export function generateMarkdown(doc: TestDocument, template: TemplateConfig = D
       p => p.name.trim() && p.values.some(v => v.trim())
     )
     if (validParams.length > 0 && section.scenarios.length > 1) {
+      lines.push("### Scenario Overview")
+      lines.push("")
       const paramNames = validParams.map(p => p.name)
       const headers = section.isPerformance
         ? ["#", ...paramNames, "Expected", "Avg", "P50", "P95", "P99", "Result"]
@@ -252,7 +376,7 @@ export function generateMarkdown(doc: TestDocument, template: TemplateConfig = D
       // Build all rows first to compute column widths
       const dataRows: string[][] = section.scenarios.map((s, si) => {
         const vals = paramNames.map(name => s.matrixCombo[name] || "—")
-        const expected = s.expected.trim() || "—"
+        const expected = s.expected.trim() || section.expected?.trim() || "—"
         const result = `${statusEmoji(s.status)} ${statusLabel(s.status)}`
         if (section.isPerformance) {
           const stats = computePerfStats(s.perfTrials)
@@ -284,7 +408,7 @@ export function generateMarkdown(doc: TestDocument, template: TemplateConfig = D
         if (s.status === "n-a") continue // skip N/A scenarios in detail
 
         lines.push(
-          `#### ${statusEmoji(s.status)} Test Case ${i + 1}${s.title ? `: ${s.title}` : ""}`
+          `#### [${statusLabel(s.status).toUpperCase()}] Test Case ${i + 1}${s.title ? `: ${s.title}` : ""}`
         )
         lines.push("")
 
@@ -299,9 +423,6 @@ export function generateMarkdown(doc: TestDocument, template: TemplateConfig = D
             lines.push("")
           }
         }
-
-        lines.push(`**Status:** ${statusLabel(s.status)}`)
-        lines.push("")
 
         if (s.status === "blocked" && s.blockedReason?.trim()) {
           lines.push(`**Blocked By:** ${s.blockedReason}`)
@@ -363,6 +484,9 @@ export function generateMarkdown(doc: TestDocument, template: TemplateConfig = D
   // Resolve img: references
   const imageMap = new Map<string, { data: string; name: string; adoUrl?: string }>()
   for (const section of doc.matrixSections) {
+    for (const img of section.images ?? []) {
+      imageMap.set(img.id, { data: img.data, name: img.name, adoUrl: img.adoUrl })
+    }
     for (const s of section.scenarios) {
       for (const img of s.images ?? []) {
         imageMap.set(img.id, { data: img.data, name: img.name, adoUrl: img.adoUrl })

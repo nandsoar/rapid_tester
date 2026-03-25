@@ -159,6 +159,7 @@ export interface TestIteration {
   number: number
   timestamp: string
   content: string
+  statusHtml?: string
 }
 
 /** Parse iteration blocks from the Test Cases HTML field.
@@ -270,7 +271,8 @@ function buildFieldValue(iterations: TestIteration[]): string {
   return iterations
     .map(it => {
       const marker = `<div data-rt-iteration="${it.number}" data-rt-ts="${it.timestamp}">`
-      const header = `<h2>Iteration ${it.number} — ${it.timestamp}</h2>`
+      const badge = it.statusHtml ? ` ${it.statusHtml}` : ""
+      const header = `<h2>Iteration ${it.number} \u2014 ${it.timestamp}${badge}</h2>`
       return `${marker}\n${header}\n${it.content}\n</div>`
     })
     .join("\n\n---\n\n")
@@ -316,6 +318,7 @@ export async function pushTestCases(
   workItemId: number,
   newContent: string,
   targetIteration: number | null,
+  statusHtml?: string,
 ): Promise<boolean> {
   const settings = loadAdoSettings()
   if (!settings.orgUrl || !settings.pat) {
@@ -341,6 +344,7 @@ export async function pushTestCases(
       number: nextNum,
       timestamp,
       content: newContent,
+      statusHtml,
     }
     updatedIterations = [newIter, ...iterations]
   } else {
@@ -351,7 +355,7 @@ export async function pushTestCases(
     }
     updatedIterations = iterations.map(it =>
       it.number === targetIteration
-        ? { ...it, content: newContent }
+        ? { ...it, content: newContent, statusHtml }
         : it
     )
   }

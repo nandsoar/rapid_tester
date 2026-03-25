@@ -8,7 +8,7 @@ import HeaderControl from "./HeaderControl"
 import NotesControl from "./NotesControl"
 import MatrixControl from "./MatrixControl"
 import ScenarioControl from "./ScenarioControl"
-import { generateHtml } from "../markdown"
+import { generateHtml, deriveOverallStatus } from "../markdown"
 import { generateXlsx } from "../generateXlsx"
 import WorkItemPanel from "./WorkItemDrawer"
 import DiscussionPanel from "./DiscussionPanel"
@@ -126,6 +126,7 @@ export default function Editor() {
 
     // If the doc has images with adoUrl but no data (loaded from iteration), resolve them
     const hasUnresolved = loaded.matrixSections.some(s =>
+      (s.images ?? []).some(img => !img.data && img.adoUrl) ||
       s.scenarios.some(sc => sc.images?.some(img => !img.data && img.adoUrl))
     )
     if (hasUnresolved) {
@@ -138,6 +139,9 @@ export default function Editor() {
     if (!doc) return
     const ids: string[] = []
     for (const s of doc.matrixSections) {
+      for (const img of s.images ?? []) {
+        if (!img.data && !localImageData.has(img.id)) ids.push(img.id)
+      }
       for (const sc of s.scenarios) {
         for (const img of sc.images ?? []) {
           if (!img.data && !localImageData.has(img.id)) ids.push(img.id)
@@ -263,6 +267,14 @@ export default function Editor() {
 
     // Apply cached image data immediately to avoid broken-image flash
     for (const section of parsed.matrixSections) {
+      if (section.images) {
+        for (let j = 0; j < section.images.length; j++) {
+          const img = section.images[j]
+          if (!img.data && img.adoUrl && imageCache.current.has(img.adoUrl)) {
+            section.images[j] = { ...img, data: imageCache.current.get(img.adoUrl)! }
+          }
+        }
+      }
       for (const scenario of section.scenarios) {
         if (!scenario.images) continue
         for (let j = 0; j < scenario.images.length; j++) {
@@ -290,6 +302,19 @@ export default function Editor() {
     let changed = false
     const sections = [...target.matrixSections]
     for (const section of sections) {
+      if (section.images) {
+        for (let j = 0; j < section.images.length; j++) {
+          const img = section.images[j]
+          if (!img.data && img.adoUrl) {
+            try {
+              const dataUrl = await downloadAttachment(img.adoUrl)
+              imageCache.current.set(img.adoUrl, dataUrl)
+              section.images[j] = { ...img, data: dataUrl }
+              changed = true
+            } catch { /* leave as ADO URL */ }
+          }
+        }
+      }
       for (const scenario of section.scenarios) {
         if (!scenario.images) continue
         for (let j = 0; j < scenario.images.length; j++) {
@@ -316,6 +341,9 @@ export default function Editor() {
       id: nanoid(),
       title: "",
       description: "",
+      expected: "",
+      prerequisites: "",
+      steps: "",
       isPerformance: false,
       parameters: [],
       scenarios: [],
@@ -468,6 +496,15 @@ export default function Editor() {
       // Upload images to ADO
       let updated = doc
       for (const section of updated.matrixSections) {
+        for (const img of section.images ?? []) {
+          if (!img.adoUrl) {
+            const data = img.data || localImageData.get(img.id) || await loadImageData(img.id)
+            if (data) {
+              const adoUrl = await uploadAttachment(img.name, data)
+              img.adoUrl = adoUrl
+            }
+          }
+        }
         for (const scenario of section.scenarios) {
           for (const img of scenario.images ?? []) {
             if (!img.adoUrl) {
@@ -483,7 +520,9 @@ export default function Editor() {
       persist(updated)
 
       const content = generateHtml(updated, undefined, "ado")
-      const pushed = await pushTestCases(doc.adoWorkItemId, content, targetIteration)
+      const overallStatus = deriveOverallStatus(updated)
+      const iterBadge = `<span style="display:inline-block;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:700;color:#fff;background:${overallStatus === 'fail' ? '#dc2626' : overallStatus === 'blocked' ? '#9333ea' : overallStatus === 'pass' ? '#16a34a' : '#6b7280'};vertical-align:middle">${overallStatus === 'fail' ? 'FAIL' : overallStatus === 'blocked' ? 'BLOCKED' : overallStatus === 'pass' ? 'PASS' : 'NOT RUN'}</span>`
+      const pushed = await pushTestCases(doc.adoWorkItemId, content, targetIteration, iterBadge)
       setPushMsg({ type: "ok", text: pushed ? "Pushed to ADO successfully" : "No changes to push" })
       setTimeout(() => setPushMsg(null), 4000)
       clearDirty(activeIteration)
