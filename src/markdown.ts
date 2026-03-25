@@ -187,7 +187,7 @@ export function generateHtml(doc: TestDocument, template: TemplateConfig = DEFAU
 
         // Inline perf trial results per scenario — one-row table
         if (section.isPerformance && s.perfTrials?.some(v => v !== null && v !== undefined)) {
-          parts.push(`<p style="margin-top:1.2em;font-weight:600;color:var(--color-primary,#2563eb)">Measurements</p>`)
+          parts.push(`<p style="margin-top:1.2em;font-weight:600">Measurements</p>`)
           const trials = s.perfTrials ?? []
           const stats = computePerfStats(trials)
           const thCells = Array.from({ length: 10 }, (_, t) => `<th>T${t + 1}</th>`).join("") + `<th>Avg</th><th>P50</th><th>P95</th><th>P99</th>`
@@ -200,33 +200,6 @@ export function generateHtml(doc: TestDocument, template: TemplateConfig = DEFAU
 
         parts.push(`<hr>`)
       }
-    }
-
-    // Performance trials table
-    if (section.isPerformance && section.scenarios.length > 1) {
-      const perfHeaders = ["#"]
-      for (let t = 1; t <= 10; t++) perfHeaders.push(`T${t}`)
-      perfHeaders.push("Avg", "P50", "P95", "P99")
-
-      const headCells = perfHeaders.map(h => `<th>${esc(h)}</th>`).join("")
-      const perfRows = section.scenarios.map((s, i) => {
-        const trials = s.perfTrials ?? []
-        const stats = computePerfStats(trials)
-        const cells = [
-          `<td>${i + 1}</td>`,
-          ...Array.from({ length: 10 }, (_, t) => {
-            const v = trials[t]
-            return `<td>${v !== null && v !== undefined && !isNaN(v) ? v : "\u2014"}</td>`
-          }),
-          `<td><strong>${formatStat(stats.avg)}</strong></td>`,
-          `<td><strong>${formatStat(stats.p50)}</strong></td>`,
-          `<td><strong>${formatStat(stats.p95)}</strong></td>`,
-          `<td><strong>${formatStat(stats.p99)}</strong></td>`,
-        ].join("")
-        return `  <tr>${cells}</tr>`
-      })
-      parts.push(`<h3>Performance Results</h3>`)
-      parts.push(`<table>\n<thead><tr>${headCells}</tr></thead>\n<tbody>\n${perfRows.join("\n")}\n</tbody>\n</table>`)
     }
   }
 
@@ -382,35 +355,6 @@ export function generateMarkdown(doc: TestDocument, template: TemplateConfig = D
         lines.push("---")
         lines.push("")
       }
-    }
-
-    // Performance trials table
-    if (section.isPerformance && section.scenarios.length > 1) {
-      lines.push("### Performance Results")
-      lines.push("")
-      const hdrs = ["#"]
-      for (let t = 1; t <= 10; t++) hdrs.push(`T${t}`)
-      hdrs.push("Avg", "P50", "P95", "P99")
-      lines.push(`| ${hdrs.join(" | ")} |`)
-      lines.push(`| ${hdrs.map(() => "---").join(" | ")} |`)
-      for (let i = 0; i < section.scenarios.length; i++) {
-        const s = section.scenarios[i]
-        const trials = s.perfTrials ?? []
-        const stats = computePerfStats(trials)
-        const row = [
-          String(i + 1),
-          ...Array.from({ length: 10 }, (_, t) => {
-            const v = trials[t]
-            return v !== null && v !== undefined && !isNaN(v) ? String(v) : "\u2014"
-          }),
-          `**${formatStat(stats.avg)}**`,
-          `**${formatStat(stats.p50)}**`,
-          `**${formatStat(stats.p95)}**`,
-          `**${formatStat(stats.p99)}**`,
-        ]
-        lines.push(`| ${row.join(" | ")} |`)
-      }
-      lines.push("")
     }
   }
 
